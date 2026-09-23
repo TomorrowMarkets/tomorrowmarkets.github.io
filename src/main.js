@@ -1,5 +1,5 @@
 /**
- * TOMORROW MARKETS - Engine with Capital-Deducting Short Position Mechanics
+ * TOMORROW MARKETS - Strict Capital-Pool Short & Long Inventory Engine
  */
 
 // ===================================================================
@@ -21,13 +21,13 @@ class EventBus {
 }
 
 // ===================================================================
-// 2. ACCOUNT MANAGER WITH ACCUMULATED CAPITAL & COLLATERAL CONSTRAINTS
+// 2. ACCOUNT MANAGER WITH SYMMETRIC CAPITAL POOL
 // ===================================================================
 class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
     this.playerId = playerId;
-    this.cash = 10000.00; // Uncommitted Cash Capital
+    this.cash = 10000.00; // Available uncommitted capital balance
     this.shares = 0;      // Positive = Long, Negative = Short
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
@@ -44,13 +44,13 @@ class AccountManager {
 
   canPlaceOrder(side, type, price, qty, currentMidPrice = 100) {
     const execPrice = type === 'MARKET' ? currentMidPrice : price;
+    const orderCost = execPrice * qty;
 
     if (side === 'BUY') {
       if (this.shares >= 0) {
-        // Opening / adding to long position
-        const cost = execPrice * qty;
-        if (this.cash < cost) {
-          return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)}) to buy ${qty} shares at $${execPrice.toFixed(2)} (Requires $${cost.toFixed(2)}).` };
+        // Opening / expanding long position
+        if (this.cash < orderCost) {
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to buy ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
         }
       } else {
         // Covering short position + potential flip to long
@@ -59,24 +59,23 @@ class AccountManager {
         const flipCost = flipLongQty * execPrice;
 
         if (flipCost > 0 && this.cash < flipCost) {
-          return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)}) to open new long exposure of ${flipLongQty} shares.` };
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open net long position of ${flipLongQty} shares.` };
         }
       }
     } else if (side === 'SELL') {
       if (this.shares <= 0) {
-        // Opening / adding to short position (requires reserving capital equal to short value)
-        const shortCollateral = execPrice * qty;
-        if (this.cash < shortCollateral) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares at $${execPrice.toFixed(2)} (Requires $${shortCollateral.toFixed(2)}).` };
+        // Opening / expanding short position
+        if (this.cash < orderCost) {
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
         }
       } else {
         // Closing long position + potential flip to short
         const longQtyToClose = Math.min(qty, this.shares);
         const flipShortQty = qty - longQtyToClose;
-        const flipCollateral = flipShortQty * execPrice;
+        const flipCost = flipShortQty * execPrice;
 
-        if (flipCollateral > 0 && this.cash < flipCollateral) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open new short position of ${flipShortQty} shares.` };
+        if (flipCost > 0 && this.cash < flipCost) {
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open net short position of ${flipShortQty} shares.` };
         }
       }
     }
@@ -103,16 +102,16 @@ class AccountManager {
     if (buyerId === this.playerId) {
       let remainingQty = qty;
 
-      // 1. Cover short inventory first (moves shares towards 0)
+      // 1. Cover short inventory first (releases reserved capital + PnL back into cash)
       if (this.shares < 0) {
         const coverQty = Math.min(remainingQty, Math.abs(this.shares));
         const pnl = (this.avgEntry - price) * coverQty;
         this.realizedPnL += pnl;
 
-        // Restore reserved short capital (coverQty * avgEntry) adjusted by realized PnL
+        // Restore original reserved short capital plus realized PnL
         this.cash += (coverQty * this.avgEntry) + pnl;
 
-        this.shares += coverQty;
+        this.shares += coverQty; // Moves inventory toward 0 (e.g. -100 + 10 = -90)
         if (this.shares === 0) this.avgEntry = 0;
 
         remainingQty -= coverQty;
@@ -121,7 +120,7 @@ class AccountManager {
       // 2. Open / expand long position with remaining quantity
       if (remainingQty > 0) {
         const cost = price * remainingQty;
-        this.cash -= cost;
+        this.cash -= cost; // Deduct cash capital
 
         const totalCost = (this.shares * this.avgEntry) + cost;
         this.shares += remainingQty;
@@ -135,29 +134,29 @@ class AccountManager {
     if (sellerId === this.playerId) {
       let remainingQty = qty;
 
-      // 1. Close long inventory first (moves shares towards 0)
+      // 1. Close long inventory first (releases reserved capital + PnL back into cash)
       if (this.shares > 0) {
         const closeQty = Math.min(remainingQty, this.shares);
         const pnl = (price - this.avgEntry) * closeQty;
         this.realizedPnL += pnl;
 
-        // Return original long principal plus PnL
-        this.cash += (this.avgEntry * closeQty) + pnl;
+        // Restore original long capital plus realized PnL
+        this.cash += (closeQty * this.avgEntry) + pnl;
 
-        this.shares -= closeQty;
+        this.shares -= closeQty; // Moves inventory toward 0
         if (this.shares === 0) this.avgEntry = 0;
 
         remainingQty -= closeQty;
       }
 
-      // 2. Open / expand short position with remaining quantity (reduces capital balance)
+      // 2. Open / expand short position with remaining quantity
       if (remainingQty > 0) {
-        const shortCollateral = price * remainingQty;
-        this.cash -= shortCollateral; // Cash decreases when exchanging for short liability
+        const shortCost = price * remainingQty;
+        this.cash -= shortCost; // Deduct available cash balance as short position expands
 
         const currentShortQty = Math.abs(this.shares);
-        const totalShortVal = (currentShortQty * this.avgEntry) + shortCollateral;
-        this.shares -= remainingQty; // Inventory turns negative (e.g. 0 - 10 = -10)
+        const totalShortVal = (currentShortQty * this.avgEntry) + shortCost;
+        this.shares -= remainingQty; // Inventory turns negative (e.g. 0 - 100 = -100)
         this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
       }
 
