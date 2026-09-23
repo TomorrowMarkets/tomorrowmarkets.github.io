@@ -396,7 +396,7 @@ class BookUI {
 
 class ChartUI {
   constructor(eventBus) {
-    this.eventBus = eventBus; // CRITICAL FIX: Save eventBus instance reference
+    this.eventBus = eventBus;
     this.canvas = document.getElementById('priceChartCanvas');
     this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
     this.clockDisplay = document.getElementById('sim-clock');
@@ -405,7 +405,8 @@ class ChartUI {
       '1M': 4,
       '5M': 20,
       '10M': 40,
-      '1H': 240
+      '1H': 240,
+      'ALL': null
     };
     this.activeTimeframe = '5M';
     this.history = [];
@@ -418,7 +419,7 @@ class ChartUI {
     buttons.forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const tf = e.target.getAttribute('data-tf');
-        if (tf && this.timeframeSteps[tf]) {
+        if (tf && tf in this.timeframeSteps) {
           this.activeTimeframe = tf;
           buttons.forEach((b) => b.className = 'tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer');
           e.target.className = 'tf-btn px-2 py-0.5 rounded bg-blue-600 text-white font-bold transition-colors cursor-pointer';
@@ -450,8 +451,8 @@ class ChartUI {
 
     this.ctx.clearRect(0, 0, width, height);
 
-    const maxSteps = this.timeframeSteps[this.activeTimeframe];
-    const visibleData = this.history.slice(-maxSteps);
+    const isAll = this.activeTimeframe === 'ALL';
+    const visibleData = isAll ? this.history : this.history.slice(-this.timeframeSteps[this.activeTimeframe]);
     if (visibleData.length < 2) return;
 
     const prices = visibleData.map((d) => (typeof d === 'number' ? d : d.price));
@@ -484,6 +485,7 @@ class ChartUI {
     this.ctx.strokeStyle = '#3b82f6';
     this.ctx.lineWidth = 2;
 
+    const maxSteps = isAll ? visibleData.length : this.timeframeSteps[this.activeTimeframe];
     const stepWidth = width / (maxSteps - 1);
     const startOffsetIndex = maxSteps - visibleData.length;
 
