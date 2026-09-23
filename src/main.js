@@ -21,16 +21,17 @@ class EventBus {
 }
 
 // ===================================================================
-// 2. ACCOUNT MANAGER
+// 2. ACCOUNT MANAGER WITH SHORT SELLING & MARGIN ACCOUNTING
 // ===================================================================
 class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
     this.playerId = playerId;
     this.cash = 10000.00;
-    this.shares = 0;
+    this.shares = 0; // Positive for Long, Negative for Short
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
+    this.initialMarginReq = 1.0; // 100% collateral required for shorting
 
     if (this.eventBus) {
       this.eventBus.on('TRADE', (trade) => this.onTrade(trade));
@@ -40,6 +41,37 @@ class AccountManager {
   setPlayerId(id) {
     this.playerId = id;
     this.broadcastState();
+  }
+
+  getEquity(currentPrice = 100) {
+    return this.cash + (this.shares * currentPrice);
+  }
+
+  canPlaceOrder(side, type, price, qty, currentMidPrice = 100) {
+    const execPrice = type === 'MARKET' ? currentMidPrice : price;
+    const orderCost = execPrice * qty;
+
+    if (side === 'BUY') {
+      // Cannot buy if cash balance is 0 or insufficient
+      if (this.cash <= 0 || this.cash < orderCost) {
+        return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)} available, $${orderCost.toFixed(2)} required)` };
+      }
+    } else if (side === 'SELL') {
+      // Selling beyond current long inventory introduces short liability
+      const currentLongQty = Math.max(0, this.shares);
+      const shortQtyToAdd = qty - currentLongQty;
+
+      if (shortQtyToAdd > 0) {
+        const equity = this.getEquity(currentMidPrice);
+        const requiredMargin = shortQtyToAdd * execPrice * this.initialMarginReq;
+
+        if (equity <= 0 || equity < requiredMargin) {
+          return { allowed: false, reason: `Insufficient margin equity ($${equity.toFixed(2)} equity available, $${requiredMargin.toFixed(2)} margin required)` };
+        }
+      }
+    }
+
+    return { allowed: true };
   }
 
   broadcastState() {
@@ -60,21 +92,57 @@ class AccountManager {
     if (buyerId === this.playerId) {
       const cost = price * qty;
       this.cash -= cost;
-      const totalCost = (this.shares * this.avgEntry) + cost;
-      this.shares += qty;
-      this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
+
+      if (this.shares < 0) {
+        // Covering existing short position
+        const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
+        const pnl = (this.avgEntry - price) * shortQtyToCover;
+        this.realizedPnL += pnl;
+
+        const remainingBoughtQty = qty - shortQtyToCover;
+        this.shares += qty;
+
+        if (this.shares > 0) {
+          // Flipped from short to long
+          this.avgEntry = price;
+        } else if (this.shares === 0) {
+          this.avgEntry = 0;
+        }
+        // If still short (this.shares < 0), avgEntry remains unchanged
+      } else {
+        // Adding to existing long position
+        const totalCost = (this.shares * this.avgEntry) + cost;
+        this.shares += qty;
+        this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
+      }
       updated = true;
     }
 
     if (sellerId === this.playerId) {
       const revenue = price * qty;
       this.cash += revenue;
-      const pnl = (price - this.avgEntry) * qty;
-      this.realizedPnL += pnl;
-      this.shares -= qty;
-      if (this.shares <= 0) {
-        this.shares = 0;
-        this.avgEntry = 0;
+
+      if (this.shares > 0) {
+        // Closing existing long position
+        const longQtyToClose = Math.min(qty, this.shares);
+        const pnl = (price - this.avgEntry) * longQtyToClose;
+        this.realizedPnL += pnl;
+
+        const remainingSoldQty = qty - longQtyToClose;
+        this.shares -= qty;
+
+        if (this.shares < 0) {
+          // Flipped from long to short
+          this.avgEntry = price;
+        } else if (this.shares === 0) {
+          this.avgEntry = 0;
+        }
+        // If still long (this.shares > 0), avgEntry remains unchanged
+      } else {
+        // Opening or adding to short position
+        const totalShortVal = (Math.abs(this.shares) * this.avgEntry) + revenue;
+        this.shares -= qty;
+        this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
       }
       updated = true;
     }
@@ -513,6 +581,7 @@ class ControlsUI {
     this.eventBus = eventBus;
     this.accountManager = accountManager;
     this.orderType = 'LIMIT';
+    this.lastMidPrice = 100.00;
 
     this.typeLimitBtn = document.getElementById('type-limit-btn');
     this.typeMarketBtn = document.getElementById('type-market-btn');
@@ -540,7 +609,10 @@ class ControlsUI {
 
     if (this.eventBus) {
       this.eventBus.on('ACCOUNT_UPDATE', (acc) => this.renderAccount(acc));
-      this.eventBus.on('TICK', (data) => this.updateUnrealizedPnL(data.midPrice));
+      this.eventBus.on('TICK', (data) => {
+        this.lastMidPrice = data.midPrice;
+        this.updateUnrealizedPnL(data.midPrice);
+      });
     }
   }
 
@@ -560,6 +632,15 @@ class ControlsUI {
   submitOrder(side) {
     const qty = parseFloat(this.qtyInput ? this.qtyInput.value : 10) || 10;
     const price = parseFloat(this.priceInput ? this.priceInput.value : 100) || 100;
+
+    // Validate balance and margin requirements prior to submission
+    if (this.accountManager) {
+      const check = this.accountManager.canPlaceOrder(side, this.orderType, price, qty, this.lastMidPrice);
+      if (!check.allowed) {
+        alert(`Order Rejected: ${check.reason}`);
+        return;
+      }
+    }
 
     if (this.eventBus) {
       this.eventBus.emit('USER_SUBMIT_ORDER', {
@@ -587,7 +668,13 @@ class ControlsUI {
     if (!this.accountManager || !midPrice) return;
     const acc = this.accountManager;
     const posVal = acc.shares * midPrice;
-    const unrealized = acc.shares > 0 ? acc.shares * (midPrice - acc.avgEntry) : 0;
+
+    let unrealized = 0;
+    if (acc.shares > 0) {
+      unrealized = acc.shares * (midPrice - acc.avgEntry);
+    } else if (acc.shares < 0) {
+      unrealized = Math.abs(acc.shares) * (acc.avgEntry - midPrice);
+    }
 
     if (this.portPosVal) this.portPosVal.innerText = `$${posVal.toFixed(2)}`;
     if (this.portUnrealized) {
