@@ -104,28 +104,28 @@
     <div class="flex-1 grid grid-cols-12 gap-2 p-2 overflow-hidden">
       
       <!-- Charting View (Col 1 to 7) -->
-      <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col h-full">
-  <!-- Chart Header -->
-  <div class="flex items-center justify-between mb-3">
-    <div class="flex items-center gap-3">
-      <h2 class="text-xs font-bold tracking-wider text-slate-400 uppercase">Price Action</h2>
-      <span id="sim-clock" class="text-xs font-mono text-emerald-400 bg-emerald-950/50 border border-emerald-800/50 px-2 py-0.5 rounded">09:30:00 AM</span>
-    </div>
+      <div class="col-span-7 bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col h-full">
+        <!-- Chart Header -->
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <h2 class="text-xs font-bold tracking-wider text-slate-400 uppercase">Price Action</h2>
+            <span id="sim-clock" class="text-xs font-mono text-emerald-400 bg-emerald-950/50 border border-emerald-800/50 px-2 py-0.5 rounded">09:30:00 AM</span>
+          </div>
 
-    <!-- Timeframe Selector Buttons -->
-    <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800/80 text-xs font-mono">
-      <button data-tf="1M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">1M</button>
-      <button data-tf="5M" class="tf-btn px-2 py-0.5 rounded bg-blue-600 text-white font-bold transition-colors cursor-pointer">5M</button>
-      <button data-tf="10M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">10M</button>
-      <button data-tf="1H" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">1H</button>
-    </div>
-  </div>
+          <!-- Timeframe Selector Buttons -->
+          <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800/80 text-xs font-mono">
+            <button data-tf="1M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">1M</button>
+            <button data-tf="5M" class="tf-btn px-2 py-0.5 rounded bg-blue-600 text-white font-bold transition-colors cursor-pointer">5M</button>
+            <button data-tf="10M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">10M</button>
+            <button data-tf="1H" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer">1H</button>
+          </div>
+        </div>
 
-  <!-- Canvas Container -->
-  <div class="relative flex-1 w-full min-h-[220px]">
-    <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
-  </div>
-</div>
+        <!-- Canvas Container -->
+        <div class="relative flex-1 w-full min-h-[220px]">
+          <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+      </div>
 
       <!-- Level 2 Order Book Depth (Col 8 to 9) -->
       <div class="col-span-2 bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
@@ -175,8 +175,8 @@
 
           <!-- Action Buttons -->
           <div class="grid grid-cols-2 gap-2 pt-1">
-            <button id="btn-buy" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition-colors">BUY / LONG</button>
-            <button id="btn-sell" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded text-xs transition-colors">SELL / SHORT</button>
+            <button id="btn-buy" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition-colors cursor-pointer">BUY / LONG</button>
+            <button id="btn-sell" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded text-xs transition-colors cursor-pointer">SELL / SHORT</button>
           </div>
         </div>
 
