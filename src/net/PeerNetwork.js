@@ -1,23 +1,42 @@
-
-import { events } from '../EventBus.js';
-
+// src/net/PeerNetwork.js
 export class PeerNetwork {
-  constructor() {
+  constructor(eventBus) {
+    this.eventBus = eventBus;
     this.peer = null;
     this.connections = [];
-
-    // Broadcast local trades to connected peers
-    events.on('TRADE_EXECUTED', (trade) => this.broadcast({ type: 'TRADE', trade }));
+    this.hostConn = null;
+    this.isHost = false;
   }
 
-  broadcast(message) {
-    this.connections.forEach(conn => conn.send(message));
+  initHost(roomCode) {
+    this.isHost = true;
+    this.peer = new Peer('tm-room-' + roomCode);
+
+    this.peer.on('connection', (conn) => {
+      this.connections.push(conn);
+      conn.on('data', (data) => {
+        if (this.eventBus) this.eventBus.emit('NET_DATA_RECEIVED', { conn, data });
+      });
+    });
   }
 
-  onReceiveMessage(data) {
-    if (data.type === 'SUBMIT_ORDER') {
-      // Forward incoming peer order to local EventBus
-      events.emit('REMOTE_ORDER_RECEIVED', data.order);
+  initClient(roomCode, myId) {
+    this.isHost = false;
+    this.peer = new Peer('tm-client-' + myId);
+
+    this.peer.on('open', () => {
+      this.hostConn = this.peer.connect('tm-room-' + roomCode);
+      this.hostConn.on('data', (data) => {
+        if (this.eventBus) this.eventBus.emit('NET_DATA_RECEIVED', { data });
+      });
+    });
+  }
+
+  broadcast(data) {
+    if (this.isHost) {
+      this.connections.forEach(conn => { if (conn.open) conn.send(data); });
+    } else if (this.hostConn && this.hostConn.open) {
+      this.hostConn.send(data);
     }
   }
 }
