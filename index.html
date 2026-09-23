@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Tomorrow Markets</title>
+  <title>Tomorrow Markets | P2P Trading Simulator</title>
   
-  <!-- Tailwind CSS & PeerJS WebRTC -->
+  <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   
-  <!-- Fonts & Tailwind Config -->
+  <!-- Fonts & Styling -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -49,17 +49,159 @@
 </head>
 <body class="h-screen w-screen overflow-hidden flex flex-col justify-between">
 
-  <!-- Toast Container -->
+  <!-- Toast Notification Container -->
   <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
   <!-- LOBBY & START SCREEN -->
   <div id="lobby-screen" class="flex-1 flex flex-col items-center justify-center p-4 relative overflow-y-auto">
-    <!-- Lobby HTML markup remains here -->
+    <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
+      <div class="text-center">
+        <h1 class="text-3xl font-extrabold tracking-tight text-white">TOMORROW <span class="text-blue-500">MARKETS</span></h1>
+        <p class="text-xs text-slate-400 mt-1">Peer-to-Peer Order Book Trading Engine</p>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Trader Handle</label>
+          <input type="text" id="trader-name-input" value="Trader_1" class="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 pt-2">
+          <button onclick="window.startLocalGame && window.startLocalGame()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors shadow-lg">
+            Single Player
+          </button>
+          <button onclick="window.createHostLobby && window.createHostLobby()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors border border-slate-700">
+            Host Multiplayer
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- TRADING DASHBOARD -->
   <div id="trading-screen" class="hidden flex-1 flex flex-col h-full overflow-hidden">
-    <!-- Trading UI Layout markup remains here -->
+    
+    <!-- Top Bar Navigation / Header -->
+    <header class="h-14 border-b border-slate-800 bg-slate-900/80 px-4 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-3">
+        <span class="font-extrabold tracking-wider text-sm text-white">TOMORROW <span class="text-blue-500">MARKETS</span></span>
+        <span class="text-xs px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono border border-blue-500/20">LIVE L2</span>
+      </div>
+
+      <div class="flex items-center gap-6 font-mono text-xs">
+        <div>
+          <span class="text-slate-500">MID PRICE: </span>
+          <span id="mid-price-display" class="text-white font-bold">$100.00</span>
+        </div>
+        <div>
+          <span class="text-slate-500">SPREAD: </span>
+          <span id="spread-display" class="text-slate-300">$0.00</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Grid -->
+    <div class="flex-1 grid grid-cols-12 gap-2 p-2 overflow-hidden">
+      
+      <!-- Charting View (Col 1 to 7) -->
+      <div class="col-span-7 bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col justify-between">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs font-semibold text-slate-400 tracking-wider">PRICE ACTION</span>
+          <span class="text-xs font-mono text-slate-500">100ms TICK</span>
+        </div>
+        <div class="flex-1 w-full relative min-h-[200px]">
+          <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+      </div>
+
+      <!-- Level 2 Order Book Depth (Col 8 to 9) -->
+      <div class="col-span-2 bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+        <div class="text-xs font-semibold text-slate-400 tracking-wider mb-2">ORDER BOOK</div>
+        
+        <div class="grid grid-cols-3 text-[10px] text-slate-500 font-mono pb-1 border-b border-slate-800">
+          <span>PRICE</span>
+          <span class="text-right">QTY</span>
+          <span class="text-right">TOTAL</span>
+        </div>
+
+        <!-- Asks Container (Sells) -->
+        <div id="asks-container" class="flex-1 flex flex-col justify-end gap-1 py-2 overflow-hidden"></div>
+        
+        <div class="py-1 border-y border-slate-800 text-center font-mono text-xs text-slate-400 my-1">
+          SPREAD
+        </div>
+
+        <!-- Bids Container (Buys) -->
+        <div id="bids-container" class="flex-1 flex flex-col justify-start gap-1 py-2 overflow-hidden"></div>
+      </div>
+
+      <!-- Execution Panel & Portfolio (Col 10 to 12) -->
+      <div class="col-span-3 flex flex-col gap-2">
+        
+        <!-- Order Entry Controls -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-3">
+          <div class="text-xs font-semibold text-slate-400 tracking-wider">ORDER ENTRY</div>
+          
+          <!-- Order Type Switcher -->
+          <div class="grid grid-cols-2 gap-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
+            <button id="type-limit-btn" onclick="window.setOrderType('LIMIT')" class="py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors">LIMIT</button>
+            <button id="type-market-btn" onclick="window.setOrderType('MARKET')" class="py-1 text-center rounded text-slate-400 hover:text-white transition-colors">MARKET</button>
+          </div>
+
+          <!-- Quantity Input -->
+          <div>
+            <label class="block text-[10px] text-slate-500 font-mono mb-1">QUANTITY</label>
+            <input id="order-qty" type="number" value="10" min="1" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+          </div>
+
+          <!-- Price Input -->
+          <div id="price-input-container">
+            <label class="block text-[10px] text-slate-500 font-mono mb-1">LIMIT PRICE ($)</label>
+            <input id="order-price" type="number" step="0.01" value="100.00" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button onclick="window.submitOrder('BUY')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition-colors">BUY / LONG</button>
+            <button onclick="window.submitOrder('SELL')" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded text-xs transition-colors">SELL / SHORT</button>
+          </div>
+        </div>
+
+        <!-- Portfolio & PnL Overview -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex-1 flex flex-col justify-between">
+          <div class="text-xs font-semibold text-slate-400 tracking-wider mb-2">POSITIONS & PnL</div>
+
+          <div class="space-y-2 font-mono text-xs">
+            <div class="flex justify-between text-slate-400">
+              <span>CASH BALANCE</span>
+              <span id="port-cash" class="text-white font-bold">$10,000.00</span>
+            </div>
+            <div class="flex justify-between text-slate-400">
+              <span>SHARES HELD</span>
+              <span id="port-shares" class="text-white font-bold">0</span>
+            </div>
+            <div class="flex justify-between text-slate-400">
+              <span>AVG ENTRY</span>
+              <span id="port-avg-price" class="text-white font-bold">$0.00</span>
+            </div>
+            <div class="flex justify-between text-slate-400">
+              <span>POSITION VALUE</span>
+              <span id="port-pos-val" class="text-white font-bold">$0.00</span>
+            </div>
+            <div class="border-t border-slate-800 pt-2 flex justify-between">
+              <span class="text-slate-400">UNREALIZED PnL</span>
+              <span id="port-unrealized" class="font-bold text-slate-300">$0.00</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">REALIZED PnL</span>
+              <span id="port-realized" class="font-bold text-slate-300">$0.00</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
   </div>
 
   <!-- ES Module Entry Point -->
