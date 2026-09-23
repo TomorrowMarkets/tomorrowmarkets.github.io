@@ -67,10 +67,10 @@
         </div>
 
         <div class="grid grid-cols-2 gap-3 pt-2">
-          <button onclick="window.startLocalGame && window.startLocalGame()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors shadow-lg">
+          <button id="btn-single-player" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors shadow-lg cursor-pointer">
             Single Player
           </button>
-          <button onclick="window.createHostLobby && window.createHostLobby()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors border border-slate-700">
+          <button id="btn-host-multiplayer" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors border border-slate-700 cursor-pointer">
             Host Multiplayer
           </button>
         </div>
@@ -144,8 +144,8 @@
           
           <!-- Order Type Switcher -->
           <div class="grid grid-cols-2 gap-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
-            <button id="type-limit-btn" onclick="window.setOrderType('LIMIT')" class="py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors">LIMIT</button>
-            <button id="type-market-btn" onclick="window.setOrderType('MARKET')" class="py-1 text-center rounded text-slate-400 hover:text-white transition-colors">MARKET</button>
+            <button id="type-limit-btn" class="py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors">LIMIT</button>
+            <button id="type-market-btn" class="py-1 text-center rounded text-slate-400 hover:text-white transition-colors">MARKET</button>
           </div>
 
           <!-- Quantity Input -->
@@ -162,8 +162,8 @@
 
           <!-- Action Buttons -->
           <div class="grid grid-cols-2 gap-2 pt-1">
-            <button onclick="window.submitOrder('BUY')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition-colors">BUY / LONG</button>
-            <button onclick="window.submitOrder('SELL')" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded text-xs transition-colors">SELL / SHORT</button>
+            <button id="btn-buy" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition-colors">BUY / LONG</button>
+            <button id="btn-sell" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded text-xs transition-colors">SELL / SHORT</button>
           </div>
         </div>
 
