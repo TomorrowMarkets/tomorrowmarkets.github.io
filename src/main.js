@@ -1,5 +1,5 @@
 /**
- * TOMORROW MARKETS - Engine with Strict Short Selling Inventory & Capital Limits
+ * TOMORROW MARKETS - Engine with Capital-Deducting Short Position Mechanics
  */
 
 // ===================================================================
@@ -21,14 +21,14 @@ class EventBus {
 }
 
 // ===================================================================
-// 2. ACCOUNT MANAGER WITH SHORT INVENTORY & CAPITAL CONSTRAINTS
+// 2. ACCOUNT MANAGER WITH ACCUMULATED CAPITAL & COLLATERAL CONSTRAINTS
 // ===================================================================
 class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
     this.playerId = playerId;
-    this.cash = 10000.00;
-    this.shares = 0; // Positive = Long, Negative = Short
+    this.cash = 10000.00; // Uncommitted Cash Capital
+    this.shares = 0;      // Positive = Long, Negative = Short
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
 
@@ -42,42 +42,41 @@ class AccountManager {
     this.broadcastState();
   }
 
-  getEquity(currentPrice = 100) {
-    return this.cash + (this.shares * currentPrice);
-  }
-
   canPlaceOrder(side, type, price, qty, currentMidPrice = 100) {
     const execPrice = type === 'MARKET' ? currentMidPrice : price;
-    const orderCost = execPrice * qty;
 
     if (side === 'BUY') {
-      // Rule: Cannot buy if cash balance is 0 or order cost exceeds available cash
-      if (this.cash <= 0) {
-        return { allowed: false, reason: `Capital exhausted ($${this.cash.toFixed(2)} cash available). Cannot buy.` };
-      }
-      if (orderCost > this.cash) {
-        return { allowed: false, reason: `Order cost ($${orderCost.toFixed(2)}) exceeds available cash ($${this.cash.toFixed(2)}).` };
+      if (this.shares >= 0) {
+        // Opening / adding to long position
+        const cost = execPrice * qty;
+        if (this.cash < cost) {
+          return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)}) to buy ${qty} shares at $${execPrice.toFixed(2)} (Requires $${cost.toFixed(2)}).` };
+        }
+      } else {
+        // Covering short position + potential flip to long
+        const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
+        const flipLongQty = qty - shortQtyToCover;
+        const flipCost = flipLongQty * execPrice;
+
+        if (flipCost > 0 && this.cash < flipCost) {
+          return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)}) to open new long exposure of ${flipLongQty} shares.` };
+        }
       }
     } else if (side === 'SELL') {
-      // Calculate how many units exceed current long inventory
-      const existingLongs = Math.max(0, this.shares);
-      const shortQtyNeeded = qty - existingLongs;
-
-      if (shortQtyNeeded > 0) {
-        if (this.cash <= 0) {
-          return { allowed: false, reason: `Capital exhausted ($${this.cash.toFixed(2)} cash available). Cannot sell short.` };
+      if (this.shares <= 0) {
+        // Opening / adding to short position (requires reserving capital equal to short value)
+        const shortCollateral = execPrice * qty;
+        if (this.cash < shortCollateral) {
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares at $${execPrice.toFixed(2)} (Requires $${shortCollateral.toFixed(2)}).` };
         }
-        
-        // Borrowed short value cannot exceed total cash capital
-        const existingShortQty = Math.abs(Math.min(0, this.shares));
-        const totalNewShortQty = existingShortQty + shortQtyNeeded;
-        const totalShortNotional = totalNewShortQty * execPrice;
+      } else {
+        // Closing long position + potential flip to short
+        const longQtyToClose = Math.min(qty, this.shares);
+        const flipShortQty = qty - longQtyToClose;
+        const flipCollateral = flipShortQty * execPrice;
 
-        if (totalShortNotional > this.cash) {
-          return { 
-            allowed: false, 
-            reason: `Short position value ($${totalShortNotional.toFixed(2)}) exceeds maximum capital limit ($${this.cash.toFixed(2)}).` 
-          };
+        if (flipCollateral > 0 && this.cash < flipCollateral) {
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open new short position of ${flipShortQty} shares.` };
         }
       }
     }
@@ -102,54 +101,66 @@ class AccountManager {
 
     // BUYING SIDE
     if (buyerId === this.playerId) {
-      const cost = price * qty;
-      this.cash -= cost;
+      let remainingQty = qty;
 
+      // 1. Cover short inventory first (moves shares towards 0)
       if (this.shares < 0) {
-        // Covering existing short position
-        const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
-        const pnl = (this.avgEntry - price) * shortQtyToCover;
+        const coverQty = Math.min(remainingQty, Math.abs(this.shares));
+        const pnl = (this.avgEntry - price) * coverQty;
         this.realizedPnL += pnl;
 
-        this.shares += qty;
-        if (this.shares > 0) {
-          this.avgEntry = price; // Flipped to net long
-        } else if (this.shares === 0) {
-          this.avgEntry = 0; // Flat position
-        }
-      } else {
-        // Adding to long position
+        // Restore reserved short capital (coverQty * avgEntry) adjusted by realized PnL
+        this.cash += (coverQty * this.avgEntry) + pnl;
+
+        this.shares += coverQty;
+        if (this.shares === 0) this.avgEntry = 0;
+
+        remainingQty -= coverQty;
+      }
+
+      // 2. Open / expand long position with remaining quantity
+      if (remainingQty > 0) {
+        const cost = price * remainingQty;
+        this.cash -= cost;
+
         const totalCost = (this.shares * this.avgEntry) + cost;
-        this.shares += qty;
+        this.shares += remainingQty;
         this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
       }
+
       updated = true;
     }
 
     // SELLING SIDE
     if (sellerId === this.playerId) {
-      const revenue = price * qty;
-      this.cash += revenue;
+      let remainingQty = qty;
 
+      // 1. Close long inventory first (moves shares towards 0)
       if (this.shares > 0) {
-        // Closing existing long position
-        const longQtyToClose = Math.min(qty, this.shares);
-        const pnl = (price - this.avgEntry) * longQtyToClose;
+        const closeQty = Math.min(remainingQty, this.shares);
+        const pnl = (price - this.avgEntry) * closeQty;
         this.realizedPnL += pnl;
 
-        this.shares -= qty;
-        if (this.shares < 0) {
-          this.avgEntry = price; // Flipped to net short
-        } else if (this.shares === 0) {
-          this.avgEntry = 0; // Flat position
-        }
-      } else {
-        // Opening or adding to short position
+        // Return original long principal plus PnL
+        this.cash += (this.avgEntry * closeQty) + pnl;
+
+        this.shares -= closeQty;
+        if (this.shares === 0) this.avgEntry = 0;
+
+        remainingQty -= closeQty;
+      }
+
+      // 2. Open / expand short position with remaining quantity (reduces capital balance)
+      if (remainingQty > 0) {
+        const shortCollateral = price * remainingQty;
+        this.cash -= shortCollateral; // Cash decreases when exchanging for short liability
+
         const currentShortQty = Math.abs(this.shares);
-        const totalShortVal = (currentShortQty * this.avgEntry) + revenue;
-        this.shares -= qty; // Inventory turns negative (e.g., 0 - 10 = -10)
+        const totalShortVal = (currentShortQty * this.avgEntry) + shortCollateral;
+        this.shares -= remainingQty; // Inventory turns negative (e.g. 0 - 10 = -10)
         this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
       }
+
       updated = true;
     }
 
@@ -280,7 +291,7 @@ class OrderBook {
 }
 
 // ===================================================================
-// 4. BOT ECOSYSTEM (90 Noise, 5 Trend, 5 MR, 3 MM, 3 Whale)
+// 4. BOT ECOSYSTEM
 // ===================================================================
 class MarketMakerBot {
   constructor(id, orderBook) {
@@ -630,7 +641,6 @@ class ControlsUI {
     const qty = parseFloat(this.qtyInput ? this.qtyInput.value : 10) || 10;
     const price = parseFloat(this.priceInput ? this.priceInput.value : 100) || 100;
 
-    // Validate order against current account constraints
     if (this.accountManager) {
       const check = this.accountManager.canPlaceOrder(side, this.orderType, price, qty, this.lastMidPrice);
       if (!check.allowed) {
@@ -669,12 +679,15 @@ class ControlsUI {
   updateUnrealizedPnL(midPrice) {
     if (!this.accountManager || !midPrice) return;
     const acc = this.accountManager;
-    const posVal = acc.shares * midPrice;
 
+    let posVal = 0;
     let unrealized = 0;
+
     if (acc.shares > 0) {
+      posVal = acc.shares * midPrice;
       unrealized = acc.shares * (midPrice - acc.avgEntry);
     } else if (acc.shares < 0) {
+      posVal = -Math.abs(acc.shares) * midPrice;
       unrealized = Math.abs(acc.shares) * (acc.avgEntry - midPrice);
     }
 
