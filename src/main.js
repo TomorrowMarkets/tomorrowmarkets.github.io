@@ -1,5 +1,5 @@
 /**
- * TOMORROW MARKETS - Self-Contained Engine, 100-Bot Ecosystem & Time-Scaled UI
+ * TOMORROW MARKETS - Self-Contained Engine, 100-Bot Ecosystem & UI
  */
 
 // ===================================================================
@@ -89,8 +89,8 @@ class AccountManager {
 class OrderBook {
   constructor(eventBus) {
     this.eventBus = eventBus;
-    this.bids = []; // Descending
-    this.asks = []; // Ascending
+    this.bids = [];
+    this.asks = [];
     this.lastPrice = 100.00;
   }
 
@@ -236,7 +236,7 @@ class NoiseBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.actProbability = 0.15;
+    this.actProbability = 0.20;
   }
 
   onTick() {
@@ -307,7 +307,7 @@ class WhaleBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.triggerThreshold = 0.02; // 2% chance per tick
+    this.triggerThreshold = 0.03;
   }
 
   onTick() {
@@ -396,15 +396,16 @@ class BookUI {
 
 class ChartUI {
   constructor(eventBus) {
+    this.eventBus = eventBus; // CRITICAL FIX: Save eventBus instance reference
     this.canvas = document.getElementById('priceChartCanvas');
     this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
     this.clockDisplay = document.getElementById('sim-clock');
 
     this.timeframeSteps = {
-      '1M': 4,    // 60s / 15s
-      '5M': 20,   // 300s / 15s
-      '10M': 40,  // 600s / 15s
-      '1H': 240   // 3600s / 15s
+      '1M': 4,
+      '5M': 20,
+      '10M': 40,
+      '1H': 240
     };
     this.activeTimeframe = '5M';
     this.history = [];
@@ -497,7 +498,7 @@ class ChartUI {
 
     this.ctx.stroke();
 
-    // Price overlay labels
+    // Labels
     this.ctx.fillStyle = '#64748b';
     this.ctx.font = '10px monospace';
     this.ctx.fillText(`$${max.toFixed(2)}`, 8, 14);
@@ -604,13 +605,13 @@ class GameLoop {
     this.botFleet = new BotFleet(this.orderBook);
 
     this.simSecsPerTick = 15;
-    this.totalSimSecs = 9 * 3600; // 9 hours
-    this.totalTicks = this.totalSimSecs / this.simSecsPerTick; // 2160 ticks
+    this.totalSimSecs = 9 * 3600;
+    this.totalTicks = this.totalSimSecs / this.simSecsPerTick;
 
     const realMsTotal = gameDurationMinutes * 60 * 1000;
     this.tickIntervalMs = Math.floor(realMsTotal / this.totalTicks);
 
-    this.simulatedSeconds = 9 * 3600 + 30 * 60; // Start at 09:30:00 AM
+    this.simulatedSeconds = 9 * 3600 + 30 * 60; // 09:30:00 AM
     this.priceHistory = [];
     this.intervalId = null;
   }
@@ -631,6 +632,7 @@ class GameLoop {
   start() {
     if (this.intervalId) clearInterval(this.intervalId);
     this.intervalId = setInterval(() => this.tick(), this.tickIntervalMs);
+    this.tick(); // Execute immediately on start
   }
 
   tick() {
@@ -694,42 +696,28 @@ function initApp() {
     orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
   }
 
-  function launchDashboard() {
-    const lobbyScreen = document.getElementById('lobby-screen');
-    const tradingScreen = document.getElementById('trading-screen');
+  // Seed liquidity and start loop automatically regardless of lobby UI state
+  seedInitialLiquidity();
+  accountManager.broadcastState();
+  gameLoop.start();
 
-    if (lobbyScreen) lobbyScreen.classList.add('hidden');
-    if (tradingScreen) tradingScreen.classList.remove('hidden');
-
-    seedInitialLiquidity();
-    accountManager.broadcastState();
-    gameLoop.start();
-  }
-
+  const lobbyScreen = document.getElementById('lobby-screen');
+  const tradingScreen = document.getElementById('trading-screen');
   const btnSinglePlayer = document.getElementById('btn-single-player');
   const btnHostMultiplayer = document.getElementById('btn-host-multiplayer');
 
-  if (btnSinglePlayer) {
-    btnSinglePlayer.addEventListener('click', () => {
-      const input = document.getElementById('trader-name-input');
-      if (input && input.value.trim()) {
-        currentUserId = input.value.trim();
-        accountManager.setPlayerId(currentUserId);
-      }
-      launchDashboard();
-    });
+  function handleLobbyTransition() {
+    const input = document.getElementById('trader-name-input');
+    if (input && input.value.trim()) {
+      currentUserId = input.value.trim();
+      accountManager.setPlayerId(currentUserId);
+    }
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    if (tradingScreen) tradingScreen.classList.remove('hidden');
   }
 
-  if (btnHostMultiplayer) {
-    btnHostMultiplayer.addEventListener('click', () => {
-      const input = document.getElementById('trader-name-input');
-      if (input && input.value.trim()) {
-        currentUserId = input.value.trim();
-        accountManager.setPlayerId(currentUserId);
-      }
-      launchDashboard();
-    });
-  }
+  if (btnSinglePlayer) btnSinglePlayer.addEventListener('click', handleLobbyTransition);
+  if (btnHostMultiplayer) btnHostMultiplayer.addEventListener('click', handleLobbyTransition);
 }
 
 if (document.readyState === 'loading') {
