@@ -466,7 +466,7 @@
       return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }
 
-    // ================= STREAMING_CHUNK:Implementing PeerJS network logic... =================
+    // ================= NETWORK & HOST / CLIENT SETUP =================
     function setupHostMode() {
       const nameInput = document.getElementById('player-name-input').value.trim();
       STATE.myName = nameInput || 'HostTrader_' + Math.floor(Math.random()*100);
@@ -575,7 +575,7 @@
       location.reload();
     }
 
-    // ================= STREAMING_CHUNK:Building the Limit Order Book matching engine... =================
+    // ================= MATCHING ENGINE & ORDER PROCESSING =================
     function handleHostIncomingData(conn, data) {
       if (data.type === 'JOIN') {
         STATE.engine.players[data.playerId] = {
@@ -666,7 +666,7 @@
           STATE.engine.asks.push({
             id: Math.random().toString(36).substr(2,6),
             playerId,
-            name: player.name,
+            name: orderPrice,
             price: orderPrice,
             qty: remainingQty
           });
@@ -707,15 +707,18 @@
       }
     }
 
-    // ================= STREAMING_CHUNK:Implementing Bot liquidity algorithms... =================
+    // ================= BOT SIMULATION & LIQUIDITY PROVIDERS =================
     function initBots() {
       const count = parseInt(document.getElementById('bot-count-select').value);
       STATE.settings.botCount = count;
       
-      for (let i = 1; i <= count; i++) {
-        const botId = `bot-${i}`;
+      const botNames = ['AlphaMM', 'SigmaLiquidity', 'HFT_Flow', 'TrendFollower', 'MarketMaker_X', 'DeepBookBot', 'ArbNode', 'QuantScale', 'GammaScalp', 'FlowTrader'];
+      
+      for (let i = 0; i < count; i++) {
+        const botId = 'bot-' + (i + 1);
+        const botName = botNames[i % botNames.length] + '_' + (i + 1);
         STATE.engine.players[botId] = {
-          name: `AlgoBot_${i}`,
+          name: botName,
           cash: 50000.00,
           shares: 100,
           avgEntry: 100.00,
@@ -723,80 +726,86 @@
           isBot: true
         };
       }
+
+      seedInitialBook();
     }
 
-    function runBotLogic() {
+    function seedInitialBook() {
+      const mid = STATE.engine.midPrice;
+      STATE.engine.bids = [];
+      STATE.engine.asks = [];
+      const botIds = Object.keys(STATE.engine.players).filter(id => STATE.engine.players[id].isBot);
+      const defaultBot = botIds[0] || STATE.myId;
+
+      for (let i = 1; i <= 6; i++) {
+        const bidPrice = parseFloat((mid - i * 0.10).toFixed(2));
+        const askPrice = parseFloat((mid + i * 0.10).toFixed(2));
+        STATE.engine.bids.push({ id: Math.random().toString(36).substr(2,6), playerId: defaultBot, name: 'Liquidity', price: bidPrice, qty: Math.floor(Math.random() * 25) + 10 });
+        STATE.engine.asks.push({ id: Math.random().toString(36).substr(2,6), playerId: defaultBot, name: 'Liquidity', price: askPrice, qty: Math.floor(Math.random() * 25) + 10 });
+      }
+    }
+
+    function runBotStep() {
       const botIds = Object.keys(STATE.engine.players).filter(id => STATE.engine.players[id].isBot);
       if (botIds.length === 0) return;
 
-      const mid = STATE.engine.midPrice;
-
-      // Ensure Baseline Liquidity around Mid Price
       botIds.forEach(botId => {
-        // Random Market Maker noise orders
-        if (Math.random() < 0.6) {
-          const spreadOffset = (Math.random() * 0.30 + 0.05);
-          const bidP = parseFloat((mid - spreadOffset).toFixed(2));
-          const askP = parseFloat((mid + spreadOffset).toFixed(2));
-          const qty = Math.floor(Math.random() * 25) + 5;
+        if (Math.random() > 0.45) return; // Chance to place order
 
-          processOrder(botId, 'BUY', 'LIMIT', bidP, qty);
-          processOrder(botId, 'SELL', 'LIMIT', askP, qty);
-        }
+        const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
+        const mid = STATE.engine.midPrice || 100.00;
+        const offset = (Math.random() * 0.60 - 0.28).toFixed(2);
+        const price = parseFloat(Math.max(1, mid + parseFloat(offset)).toFixed(2));
+        const qty = Math.floor(Math.random() * 15) + 5;
+
+        processOrder(botId, side, 'LIMIT', price, qty);
       });
+
+      // Maintain baseline liquidity depth if spread widens too far
+      if (STATE.engine.bids.length < 3 || STATE.engine.asks.length < 3) {
+        seedInitialBook();
+      }
     }
 
-    // ================= HOST ENGINE LOOP =================
+    // ================= HOST ENGINE LOOP & TICK =================
     function startMatchHost() {
+      STATE.settings.botCount = parseInt(document.getElementById('bot-count-select').value);
+      STATE.settings.gameSpeed = parseInt(document.getElementById('game-speed-select').value);
+      STATE.settings.durationMinutes = parseInt(document.getElementById('duration-select').value);
+
       initBots();
+      STATE.engine.active = true;
+
       broadcastToClients({ type: 'START_MATCH' });
       launchTradingDashboard();
 
-      STATE.engine.active = true;
-      const speed = parseInt(document.getElementById('game-speed-select').value);
-      STATE.settings.gameSpeed = speed;
-
-      STATE.engine.intervalId = setInterval(() => {
-        // Fast Time Increment (1 sec real = speed sec market time)
-        STATE.engine.clockSeconds += speed;
-
-        // Price random walk drift
-        const drift = (Math.random() - 0.49) * 0.12;
-        STATE.engine.midPrice = Math.max(1.00, parseFloat((STATE.engine.midPrice + drift).toFixed(2)));
-        
-        STATE.engine.priceHistory.push(STATE.engine.midPrice);
-        if (STATE.engine.priceHistory.length > 80) STATE.engine.priceHistory.shift();
-
-        // Run Bots
-        runBotLogic();
-
-        // Prepare Tick State Payload
-        const statePayload = {
-          type: 'TICK',
-          clockSeconds: STATE.engine.clockSeconds,
-          midPrice: STATE.engine.midPrice,
-          lastPrice: STATE.engine.lastPrice,
-          priceHistory: STATE.engine.priceHistory,
-          bids: STATE.engine.bids.slice(0, 8),
-          asks: STATE.engine.asks.slice(0, 8),
-          players: STATE.engine.players
-        };
-
-        // Sync local host state & Broadcast to clients
-        syncStateFromHost(statePayload);
-        broadcastToClients(statePayload);
-
-      }, 1000);
+      STATE.engine.intervalId = setInterval(hostGameTick, 500);
     }
 
-    function launchTradingDashboard() {
-      document.getElementById('lobby-screen').classList.add('hidden');
-      document.getElementById('trading-screen').classList.remove('hidden');
-      document.getElementById('dash-room-code').innerText = STATE.roomCode;
-      document.getElementById('dash-speed').innerText = `(${STATE.settings.gameSpeed}x)`;
-      
-      window.addEventListener('resize', renderChart);
-      setTimeout(renderChart, 100);
+    function hostGameTick() {
+      if (!STATE.engine.active) return;
+
+      STATE.engine.clockSeconds += Math.round(STATE.settings.gameSpeed / 2);
+      runBotStep();
+
+      STATE.engine.priceHistory.push(STATE.engine.midPrice);
+      if (STATE.engine.priceHistory.length > 80) {
+        STATE.engine.priceHistory.shift();
+      }
+
+      const tickPacket = {
+        type: 'TICK',
+        clockSeconds: STATE.engine.clockSeconds,
+        midPrice: STATE.engine.midPrice,
+        lastPrice: STATE.engine.lastPrice,
+        priceHistory: STATE.engine.priceHistory,
+        bids: STATE.engine.bids,
+        asks: STATE.engine.asks,
+        players: STATE.engine.players
+      };
+
+      broadcastToClients(tickPacket);
+      renderDashboard(tickPacket);
     }
 
     function syncStateFromHost(data) {
@@ -808,190 +817,172 @@
       STATE.engine.asks = data.asks;
       STATE.engine.players = data.players;
 
-      // Extract local player portfolio
-      const myData = STATE.engine.players[STATE.myId];
-      if (myData) {
-        STATE.localPlayer.cash = myData.cash;
-        STATE.localPlayer.shares = myData.shares;
-        STATE.localPlayer.avgEntry = myData.avgEntry;
-        STATE.localPlayer.realizedPnL = myData.realizedPnL;
-      }
-
-      renderDashboardUI();
+      renderDashboard(data);
     }
 
-    // ================= STREAMING_CHUNK:Rendering canvas price chart and UI components... =================
-    function renderDashboardUI() {
-      // Clock
-      document.getElementById('dash-clock').innerText = formatTime(STATE.engine.clockSeconds);
+    // ================= UI CONTROL & DASHBOARD RENDERERS =================
+    function launchTradingDashboard() {
+      document.getElementById('lobby-screen').classList.add('hidden');
+      document.getElementById('trading-screen').classList.remove('hidden');
+      document.getElementById('dash-room-code').innerText = STATE.roomCode;
+      document.getElementById('dash-speed').innerText = `(${STATE.settings.gameSpeed || 26}x)`;
 
-      // Order Book Bids & Asks
-      renderOrderBook();
+      window.addEventListener('resize', renderChart);
+    }
 
-      // Leaderboard
-      renderLeaderboard();
+    function renderDashboard(data) {
+      document.getElementById('dash-clock').innerText = formatTime(data.clockSeconds);
+      document.getElementById('mid-price-display').innerText = '$' + data.midPrice.toFixed(2);
+      
+      const spread = (data.asks.length > 0 && data.bids.length > 0) 
+        ? (data.asks[0].price - data.bids[0].price).toFixed(2) 
+        : '0.00';
+      document.getElementById('spread-display').innerText = '$' + spread;
 
-      // Portfolio Metrics
-      renderPortfolio();
-
-      // Chart
+      renderOrderBook(data.bids, data.asks);
       renderChart();
+      renderLeaderboard(data.players);
+      renderPortfolio(data.players[STATE.myId]);
     }
 
-    function renderOrderBook() {
+    function renderOrderBook(bids, asks) {
       const asksContainer = document.getElementById('asks-container');
       const bidsContainer = document.getElementById('bids-container');
 
-      // Top of book highlights & depth
-      const asks = STATE.engine.asks.slice().reverse(); // High to low
-      const maxAskQty = Math.max(...asks.map(a => a.qty), 1);
-      
-      asksContainer.innerHTML = asks.map(a => {
-        const depthPct = Math.min(100, (a.qty / maxAskQty) * 100);
-        return `
-          <div class="grid grid-cols-3 text-right py-0.5 px-1 relative items-center text-red-400 hover:bg-slate-800/50">
-            <div class="absolute right-0 top-0 bottom-0 bg-red-500/10 pointer-events-none" style="width:${depthPct}%"></div>
-            <span class="text-left font-bold">$${a.price.toFixed(2)}</span>
-            <span>${a.qty}</span>
-            <span class="text-slate-500">$${(a.price * a.qty).toFixed(0)}</span>
-          </div>
-        `;
-      }).join('');
+      const topAsks = [...asks].sort((a,b) => b.price - a.price).slice(-6);
+      asksContainer.innerHTML = topAsks.map(a => `
+        <div class="grid grid-cols-3 text-red-400 hover:bg-red-500/10 px-1 py-0.5 rounded transition-colors">
+          <span>$${a.price.toFixed(2)}</span>
+          <span class="text-right font-bold">${a.qty}</span>
+          <span class="text-right text-slate-500">${(a.price * a.qty).toFixed(0)}</span>
+        </div>
+      `).join('');
 
-      const bids = STATE.engine.bids;
-      const maxBidQty = Math.max(...bids.map(b => b.qty), 1);
-
-      bidsContainer.innerHTML = bids.map(b => {
-        const depthPct = Math.min(100, (b.qty / maxBidQty) * 100);
-        return `
-          <div class="grid grid-cols-3 text-right py-0.5 px-1 relative items-center text-emerald-400 hover:bg-slate-800/50">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/10 pointer-events-none" style="width:${depthPct}%"></div>
-            <span class="text-left font-bold">$${b.price.toFixed(2)}</span>
-            <span>${b.qty}</span>
-            <span class="text-slate-500">$${(b.price * b.qty).toFixed(0)}</span>
-          </div>
-        `;
-      }).join('');
-
-      document.getElementById('mid-price-display').innerText = `$${STATE.engine.midPrice.toFixed(2)}`;
-      
-      const spread = (STATE.engine.asks.length && STATE.engine.bids.length) 
-        ? Math.max(0, STATE.engine.asks[0].price - STATE.engine.bids[0].price) : 0.00;
-      document.getElementById('spread-display').innerText = `$${spread.toFixed(2)}`;
+      const topBids = [...bids].sort((a,b) => b.price - a.price).slice(0, 6);
+      bidsContainer.innerHTML = topBids.map(b => `
+        <div class="grid grid-cols-3 text-emerald-400 hover:bg-emerald-500/10 px-1 py-0.5 rounded transition-colors">
+          <span>$${b.price.toFixed(2)}</span>
+          <span class="text-right font-bold">${b.qty}</span>
+          <span class="text-right text-slate-500">${(b.price * b.qty).toFixed(0)}</span>
+        </div>
+      `).join('');
     }
 
-    function renderLeaderboard() {
-      const tbody = document.getElementById('leaderboard-body');
-      const mid = STATE.engine.midPrice;
+    function renderChart() {
+      const canvas = document.getElementById('priceChartCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * (window.devicePixelRatio || 1);
+      canvas.height = rect.height * (window.devicePixelRatio || 1);
+      ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-      const ranked = Object.values(STATE.engine.players).map(p => {
-        const posVal = p.shares * mid;
-        const totalEquity = p.cash + posVal;
+      const width = rect.width;
+      const height = rect.height;
+      const history = STATE.engine.priceHistory;
+
+      ctx.clearRect(0, 0, width, height);
+      if (!history || history.length < 2) return;
+
+      const minPrice = Math.min(...history) - 0.20;
+      const maxPrice = Math.max(...history) + 0.20;
+      const range = (maxPrice - minPrice) || 1;
+
+      // Grid background lines
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 4; i++) {
+        const y = (height / 4) * i;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      }
+
+      // Main price line
+      ctx.beginPath();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+
+      history.forEach((price, idx) => {
+        const x = (idx / (history.length - 1)) * width;
+        const y = height - ((price - minPrice) / range) * (height - 20) - 10;
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Area fill gradient
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.2)');
+      gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+      ctx.lineTo(width, height);
+      ctx.lineTo(0, height);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      const lastP = history[history.length - 1];
+      document.getElementById('chart-price-callout').innerText = '$' + lastP.toFixed(2);
+    }
+
+    function renderLeaderboard(players) {
+      if (!players) return;
+      const body = document.getElementById('leaderboard-body');
+      const mid = STATE.engine.midPrice || 100.00;
+
+      const sorted = Object.entries(players).map(([id, p]) => {
+        const totalEquity = p.cash + (p.shares * mid);
         const pnl = totalEquity - 10000.00;
-        return { ...p, totalEquity, pnl };
+        return { id, ...p, totalEquity, pnl };
       }).sort((a,b) => b.totalEquity - a.totalEquity);
 
-      tbody.innerHTML = ranked.map((p, idx) => {
+      body.innerHTML = sorted.map((p, idx) => {
+        const isMe = p.id === STATE.myId;
         const pnlClass = p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const pnlSign = p.pnl >= 0 ? '+' : '';
         return `
-          <tr class="hover:bg-slate-800/40">
-            <td class="p-2 font-bold text-slate-500">#${idx+1}</td>
-            <td class="p-2 font-medium text-white flex items-center gap-1.5">
-              ${p.isBot ? '<span class="text-[9px] bg-slate-800 text-slate-400 px-1 rounded">BOT</span>' : ''}
-              ${p.name}
-            </td>
-            <td class="p-2 text-right text-slate-300">$${p.cash.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          <tr class="${isMe ? 'bg-blue-500/10 font-bold border-l-2 border-blue-500' : 'hover:bg-slate-800/40'} text-xs">
+            <td class="p-2 text-slate-400">#${idx + 1}</td>
+            <td class="p-2 text-white font-medium">${p.name} ${isMe ? '(You)' : ''}</td>
+            <td class="p-2 text-right text-slate-300">$${p.cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
             <td class="p-2 text-right text-slate-300">${p.shares}</td>
-            <td class="p-2 text-right font-bold text-white">$${p.totalEquity.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-            <td class="p-2 text-right font-bold ${pnlClass}">${p.pnl >= 0 ? '+' : ''}$${p.pnl.toFixed(2)}</td>
+            <td class="p-2 text-right font-bold text-white">$${p.totalEquity.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td class="p-2 text-right font-bold ${pnlClass}">${pnlSign}$${p.pnl.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
           </tr>
         `;
       }).join('');
     }
 
-    function renderPortfolio() {
-      const p = STATE.localPlayer;
-      const mid = STATE.engine.midPrice;
-      const posVal = p.shares * mid;
-      const totalEquity = p.cash + posVal;
-      const unrealized = (mid - p.avgEntry) * p.shares;
+    function renderPortfolio(myPlayerData) {
+      if (!myPlayerData) return;
+      const mid = STATE.engine.midPrice || 100.00;
+      const shares = myPlayerData.shares || 0;
+      const cash = myPlayerData.cash || 10000.00;
+      const avgEntry = myPlayerData.avgEntry || 0.00;
+      const posVal = shares * mid;
+      const unrealizedPnL = shares * (mid - avgEntry);
+      const realizedPnL = myPlayerData.realizedPnL || 0.00;
+      const totalEquity = cash + posVal;
       const totalPnL = totalEquity - 10000.00;
-      const pnlPct = (totalPnL / 10000.00) * 100;
+      const pctPnL = (totalPnL / 10000.00) * 100;
 
-      document.getElementById('port-cash').innerText = `$${p.cash.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2})}`;
-      document.getElementById('port-shares').innerText = p.shares;
-      document.getElementById('port-avg-price').innerText = `$${p.avgEntry.toFixed(2)}`;
-      document.getElementById('port-pos-val').innerText = `$${posVal.toFixed(2)}`;
+      document.getElementById('port-cash').innerText = '$' + cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+      document.getElementById('port-shares').innerText = shares;
+      document.getElementById('port-avg-price').innerText = '$' + avgEntry.toFixed(2);
+      document.getElementById('port-pos-val').innerText = '$' + posVal.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 
-      const unrealElem = document.getElementById('port-unrealized');
-      unrealElem.innerText = `${unrealized >= 0 ? '+' : ''}$${unrealized.toFixed(2)}`;
-      unrealElem.className = `font-bold font-mono-num ${unrealized >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+      const unrlElem = document.getElementById('port-unrealized');
+      unrlElem.innerText = (unrealizedPnL >= 0 ? '+' : '') + '$' + unrealizedPnL.toFixed(2);
+      unrlElem.className = `font-bold font-mono-num ${unrealizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
 
-      const realElem = document.getElementById('port-realized');
-      realElem.innerText = `${p.realizedPnL >= 0 ? '+' : ''}$${p.realizedPnL.toFixed(2)}`;
-      realElem.className = `font-bold font-mono-num ${p.realizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+      const rlzElem = document.getElementById('port-realized');
+      rlzElem.innerText = (realizedPnL >= 0 ? '+' : '') + '$' + realizedPnL.toFixed(2);
+      rlzElem.className = `font-bold font-mono-num ${realizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
 
-      const headPnL = document.getElementById('dash-pnl-header');
-      headPnL.innerText = `${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)} (${pnlPct.toFixed(2)}%)`;
-      headPnL.className = `text-sm font-bold font-mono-num ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+      const headerPnL = document.getElementById('dash-pnl-header');
+      headerPnL.innerText = `${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)} (${pctPnL >= 0 ? '+' : ''}${pctPnL.toFixed(2)}%)`;
+      headerPnL.className = `text-sm font-bold font-mono-num ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
     }
 
-    // Canvas Price Chart Renderer
-    function renderChart() {
-      const canvas = document.getElementById('priceChartCanvas');
-      if (!canvas || !canvas.parentElement) return;
-
-      const rect = canvas.parentElement.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const history = STATE.engine.priceHistory;
-      if (history.length < 2) return;
-
-      const minP = Math.min(...history) * 0.998;
-      const maxP = Math.max(...history) * 1.002;
-      const stepX = canvas.width / (history.length - 1);
-
-      // Gradient Fill
-      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      grad.addColorStop(0, 'rgba(59, 130, 246, 0.25)');
-      grad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
-
-      ctx.beginPath();
-      history.forEach((p, i) => {
-        const x = i * stepX;
-        const y = canvas.height - ((p - minP) / (maxP - minP)) * canvas.height;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-
-      // Stroke Line
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-
-      // Fill Gradient under line
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.lineTo(0, canvas.height);
-      ctx.closePath();
-      ctx.fillStyle = grad;
-      ctx.fill();
-
-      // Current Price Callout Marker
-      const lastX = canvas.width;
-      const lastY = canvas.height - ((history[history.length-1] - minP) / (maxP - minP)) * canvas.height;
-      ctx.beginPath();
-      ctx.arc(lastX - 4, lastY, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#60a5fa';
-      ctx.fill();
-
-      document.getElementById('chart-price-callout').innerText = `$${history[history.length-1].toFixed(2)}`;
-    }
-
-    // ================= USER INTERACTION HELPERS =================
+    // ================= LOCAL ORDER ENTRY FORM HANDLERS =================
     function setOrderType(type) {
       STATE.orderType = type;
       const limitBtn = document.getElementById('type-limit-btn');
@@ -999,47 +990,56 @@
       const priceContainer = document.getElementById('price-input-container');
 
       if (type === 'LIMIT') {
-        limitBtn.className = 'py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors';
-        marketBtn.className = 'py-1 text-center rounded text-slate-400 hover:text-white transition-colors';
-        priceContainer.classList.remove('opacity-40', 'pointer-events-none');
+        limitBtn.className = "py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors";
+        marketBtn.className = "py-1 text-center rounded text-slate-400 hover:text-white transition-colors";
+        priceContainer.style.display = 'block';
       } else {
-        marketBtn.className = 'py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors';
-        limitBtn.className = 'py-1 text-center rounded text-slate-400 hover:text-white transition-colors';
-        priceContainer.classList.add('opacity-40', 'pointer-events-none');
+        marketBtn.className = "py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors";
+        limitBtn.className = "py-1 text-center rounded text-slate-400 hover:text-white transition-colors";
+        priceContainer.style.display = 'none';
       }
     }
 
     function setQtyPercent(pct) {
-      const price = parseFloat(document.getElementById('order-price').value) || STATE.engine.midPrice;
-      const availableCash = STATE.localPlayer.cash;
-      const maxBuyQty = Math.floor(availableCash / price);
-      const qty = Math.max(1, Math.floor((maxBuyQty * pct) / 100));
-      document.getElementById('order-qty').value = qty;
+      const me = STATE.engine.players[STATE.myId];
+      if (!me) return;
+      const price = parseFloat(document.getElementById('order-price').value) || STATE.engine.midPrice || 100;
+      const maxAffordable = Math.floor((me.cash * (pct / 100)) / price);
+      document.getElementById('order-qty').value = Math.max(1, maxAffordable);
     }
 
     function submitOrder(side) {
-      const price = parseFloat(document.getElementById('order-price').value);
       const qty = parseInt(document.getElementById('order-qty').value);
+      const price = parseFloat(document.getElementById('order-price').value);
 
       if (!qty || qty <= 0) {
-        showToast('Please enter a valid order quantity', 'error');
+        showToast('Please enter a valid quantity', 'error');
         return;
       }
 
-      if (STATE.isHost) {
-        processOrder(STATE.myId, side, STATE.orderType, price, qty);
-      } else if (STATE.hostConn) {
-        STATE.hostConn.send({
-          type: 'ORDER',
-          playerId: STATE.myId,
-          side,
-          orderType: STATE.orderType,
-          price,
-          qty
-        });
+      if (STATE.orderType === 'LIMIT' && (!price || price <= 0)) {
+        showToast('Please enter a valid limit price', 'error');
+        return;
       }
 
-      showToast(`${side} ${qty} shares @ ${STATE.orderType === 'MARKET' ? 'MKT' : '$' + price.toFixed(2)}`, 'info');
+      const orderPayload = {
+        type: 'ORDER',
+        playerId: STATE.myId,
+        side: side,
+        orderType: STATE.orderType,
+        price: price,
+        qty: qty
+      };
+
+      if (STATE.isHost) {
+        processOrder(STATE.myId, side, STATE.orderType, price, qty);
+        showToast(`${side} ${STATE.orderType} order executed`, side === 'BUY' ? 'success' : 'error');
+      } else if (STATE.hostConn && STATE.hostConn.open) {
+        STATE.hostConn.send(orderPayload);
+        showToast(`${side} ${STATE.orderType} order sent to host`, side === 'BUY' ? 'success' : 'error');
+      } else {
+        showToast('Connection to host lost', 'error');
+      }
     }
 
     function exitMatch() {
