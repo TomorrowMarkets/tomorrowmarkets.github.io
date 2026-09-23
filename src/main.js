@@ -1,5 +1,5 @@
 /**
- * TOMORROW MARKETS - Rebalanced Bot Ecosystem (90 Noise, 5 Trend, 5 MR, 3 MM, 3 Whales)
+ * TOMORROW MARKETS - Engine with Strict Short Selling Inventory & Capital Limits
  */
 
 // ===================================================================
@@ -21,17 +21,16 @@ class EventBus {
 }
 
 // ===================================================================
-// 2. ACCOUNT MANAGER WITH SHORT SELLING & MARGIN ACCOUNTING
+// 2. ACCOUNT MANAGER WITH SHORT INVENTORY & CAPITAL CONSTRAINTS
 // ===================================================================
 class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
     this.playerId = playerId;
     this.cash = 10000.00;
-    this.shares = 0; // Positive for Long, Negative for Short
+    this.shares = 0; // Positive = Long, Negative = Short
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
-    this.initialMarginReq = 1.0;
 
     if (this.eventBus) {
       this.eventBus.on('TRADE', (trade) => this.onTrade(trade));
@@ -52,19 +51,33 @@ class AccountManager {
     const orderCost = execPrice * qty;
 
     if (side === 'BUY') {
-      if (this.cash <= 0 || this.cash < orderCost) {
-        return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)} available, $${orderCost.toFixed(2)} required)` };
+      // Rule: Cannot buy if cash balance is 0 or order cost exceeds available cash
+      if (this.cash <= 0) {
+        return { allowed: false, reason: `Capital exhausted ($${this.cash.toFixed(2)} cash available). Cannot buy.` };
+      }
+      if (orderCost > this.cash) {
+        return { allowed: false, reason: `Order cost ($${orderCost.toFixed(2)}) exceeds available cash ($${this.cash.toFixed(2)}).` };
       }
     } else if (side === 'SELL') {
-      const currentLongQty = Math.max(0, this.shares);
-      const shortQtyToAdd = qty - currentLongQty;
+      // Calculate how many units exceed current long inventory
+      const existingLongs = Math.max(0, this.shares);
+      const shortQtyNeeded = qty - existingLongs;
 
-      if (shortQtyToAdd > 0) {
-        const equity = this.getEquity(currentMidPrice);
-        const requiredMargin = shortQtyToAdd * execPrice * this.initialMarginReq;
+      if (shortQtyNeeded > 0) {
+        if (this.cash <= 0) {
+          return { allowed: false, reason: `Capital exhausted ($${this.cash.toFixed(2)} cash available). Cannot sell short.` };
+        }
+        
+        // Borrowed short value cannot exceed total cash capital
+        const existingShortQty = Math.abs(Math.min(0, this.shares));
+        const totalNewShortQty = existingShortQty + shortQtyNeeded;
+        const totalShortNotional = totalNewShortQty * execPrice;
 
-        if (equity <= 0 || equity < requiredMargin) {
-          return { allowed: false, reason: `Insufficient margin equity ($${equity.toFixed(2)} equity available, $${requiredMargin.toFixed(2)} margin required)` };
+        if (totalShortNotional > this.cash) {
+          return { 
+            allowed: false, 
+            reason: `Short position value ($${totalShortNotional.toFixed(2)}) exceeds maximum capital limit ($${this.cash.toFixed(2)}).` 
+          };
         }
       }
     }
@@ -87,19 +100,25 @@ class AccountManager {
     const { buyerId, sellerId, price, qty } = trade;
     let updated = false;
 
+    // BUYING SIDE
     if (buyerId === this.playerId) {
       const cost = price * qty;
       this.cash -= cost;
 
       if (this.shares < 0) {
+        // Covering existing short position
         const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
         const pnl = (this.avgEntry - price) * shortQtyToCover;
         this.realizedPnL += pnl;
 
         this.shares += qty;
-        if (this.shares > 0) this.avgEntry = price;
-        else if (this.shares === 0) this.avgEntry = 0;
+        if (this.shares > 0) {
+          this.avgEntry = price; // Flipped to net long
+        } else if (this.shares === 0) {
+          this.avgEntry = 0; // Flat position
+        }
       } else {
+        // Adding to long position
         const totalCost = (this.shares * this.avgEntry) + cost;
         this.shares += qty;
         this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
@@ -107,21 +126,28 @@ class AccountManager {
       updated = true;
     }
 
+    // SELLING SIDE
     if (sellerId === this.playerId) {
       const revenue = price * qty;
       this.cash += revenue;
 
       if (this.shares > 0) {
+        // Closing existing long position
         const longQtyToClose = Math.min(qty, this.shares);
         const pnl = (price - this.avgEntry) * longQtyToClose;
         this.realizedPnL += pnl;
 
         this.shares -= qty;
-        if (this.shares < 0) this.avgEntry = price;
-        else if (this.shares === 0) this.avgEntry = 0;
+        if (this.shares < 0) {
+          this.avgEntry = price; // Flipped to net short
+        } else if (this.shares === 0) {
+          this.avgEntry = 0; // Flat position
+        }
       } else {
-        const totalShortVal = (Math.abs(this.shares) * this.avgEntry) + revenue;
-        this.shares -= qty;
+        // Opening or adding to short position
+        const currentShortQty = Math.abs(this.shares);
+        const totalShortVal = (currentShortQty * this.avgEntry) + revenue;
+        this.shares -= qty; // Inventory turns negative (e.g., 0 - 10 = -10)
         this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
       }
       updated = true;
@@ -254,23 +280,21 @@ class OrderBook {
 }
 
 // ===================================================================
-// 4. REBALANCED BOT ECOSYSTEM
+// 4. BOT ECOSYSTEM (90 Noise, 5 Trend, 5 MR, 3 MM, 3 Whale)
 // ===================================================================
-
-// 3 Market Makers: Deep bid/ask liquidity ladders
 class MarketMakerBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.spread = 0.04 + Math.random() * 0.06;
-    this.baseQty = Math.floor(Math.random() * 25) + 20;
+    this.spread = 0.05 + Math.random() * 0.05;
+    this.baseQty = Math.floor(Math.random() * 20) + 15;
   }
 
   onTick() {
     this.orderBook.clearPlayerOrders(this.id);
     const mid = this.orderBook.getMidPrice();
 
-    for (let level = 1; level <= 5; level++) {
+    for (let level = 1; level <= 4; level++) {
       const bidPrice = parseFloat((mid - this.spread * level).toFixed(2));
       const askPrice = parseFloat((mid + this.spread * level).toFixed(2));
 
@@ -282,19 +306,17 @@ class MarketMakerBot {
   }
 }
 
-// 90 Noise Traders: Random buy/sell market and limit orders near mid
 class NoiseBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.actProbability = 0.15; // Stochastic execution across 90 bots
+    this.actProbability = 0.15;
   }
 
   onTick() {
     if (Math.random() > this.actProbability) return;
-
     const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const isMarket = Math.random() > 0.40; // 60% Market, 40% Limit
+    const isMarket = Math.random() > 0.40;
     const qty = Math.floor(Math.random() * 10) + 1;
     const mid = this.orderBook.getMidPrice();
 
@@ -310,7 +332,6 @@ class NoiseBot {
   }
 }
 
-// 5 Trend Traders: Momentum-driven order placement
 class TrendBot {
   constructor(id, orderBook) {
     this.id = id;
@@ -327,18 +348,17 @@ class TrendBot {
 
     if (Math.abs(diff) >= 0.15) {
       const side = diff > 0 ? 'BUY' : 'SELL';
-      const qty = Math.floor(Math.random() * 15) + 5;
+      const qty = Math.floor(Math.random() * 12) + 4;
       this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty, type: 'MARKET' });
     }
   }
 }
 
-// 5 Mean Reversion Traders: Counter-trend orders when price deviates from SMA
 class MeanReversionBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.period = 12;
+    this.period = 10;
   }
 
   onTick(history) {
@@ -349,15 +369,14 @@ class MeanReversionBot {
     const mid = this.orderBook.getMidPrice();
     const dev = mid - sma;
 
-    if (dev > 0.30) {
+    if (dev > 0.25) {
       this.orderBook.processOrder({ playerId: this.id, side: 'SELL', price: 0, qty: 10, type: 'MARKET' });
-    } else if (dev < -0.30) {
+    } else if (dev < -0.25) {
       this.orderBook.processOrder({ playerId: this.id, side: 'BUY', price: 0, qty: 10, type: 'MARKET' });
     }
   }
 }
 
-// 3 Whales: Occasional large block liquidity shocks
 class WhaleBot {
   constructor(id, orderBook) {
     this.id = id;
@@ -368,7 +387,7 @@ class WhaleBot {
   onTick() {
     if (Math.random() > this.triggerThreshold) return;
     const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const blockQty = Math.floor(Math.random() * 80) + 40;
+    const blockQty = Math.floor(Math.random() * 60) + 30;
 
     this.orderBook.processOrder({
       playerId: this.id,
@@ -388,7 +407,6 @@ class BotFleet {
   }
 
   initFleet() {
-    // Exact requested breakdown
     for (let i = 0; i < 90; i++) this.bots.push(new NoiseBot(`noise_${i}`, this.orderBook));
     for (let i = 0; i < 5; i++)  this.bots.push(new TrendBot(`trend_${i}`, this.orderBook));
     for (let i = 0; i < 5; i++)  this.bots.push(new MeanReversionBot(`mr_${i}`, this.orderBook));
@@ -612,6 +630,7 @@ class ControlsUI {
     const qty = parseFloat(this.qtyInput ? this.qtyInput.value : 10) || 10;
     const price = parseFloat(this.priceInput ? this.priceInput.value : 100) || 100;
 
+    // Validate order against current account constraints
     if (this.accountManager) {
       const check = this.accountManager.canPlaceOrder(side, this.orderType, price, qty, this.lastMidPrice);
       if (!check.allowed) {
@@ -633,7 +652,12 @@ class ControlsUI {
   renderAccount(acc) {
     if (!acc) return;
     if (this.portCash) this.portCash.innerText = `$${acc.cash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (this.portShares) this.portShares.innerText = acc.shares;
+    
+    if (this.portShares) {
+      this.portShares.innerText = acc.shares;
+      this.portShares.className = `font-bold ${acc.shares < 0 ? 'text-red-400' : acc.shares > 0 ? 'text-emerald-400' : 'text-slate-300'}`;
+    }
+
     if (this.portAvgPrice) this.portAvgPrice.innerText = `$${acc.avgEntry.toFixed(2)}`;
     if (this.portRealized) {
       const rPnL = acc.realizedPnL || 0;
