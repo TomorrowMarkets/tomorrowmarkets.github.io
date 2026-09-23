@@ -1,59 +1,80 @@
-// src/game/GameLoop.js
 export class GameLoop {
-  constructor(orderBook, bots = [], network = null, eventBus = null) {
+  /**
+   * @param {Object} orderBook 
+   * @param {Array} bots 
+   * @param {Object} eventBus 
+   * @param {number} gameDurationMinutes Real-world game length (10, 20, or 30 mins)
+   */
+  constructor(orderBook, bots = [], eventBus = null, gameDurationMinutes = 10) {
     this.orderBook = orderBook;
     this.bots = bots;
-    this.network = network;
     this.eventBus = eventBus;
     
-    this.clockSeconds = 34200; // 09:30:00 AM
-    this.durationMinutes = 10;
-    this.gameSpeed = 26;
-    this.priceHistory = [100.00];
+    this.simSecsPerTick = 15; // 15 seconds per step
+    this.totalSimSecs = 9 * 3600; // 9 trading hours = 32,400s
+    this.totalTicks = this.totalSimSecs / this.simSecsPerTick; // 2,160 total steps
+    
+    // Calculate millisecond delay per tick for game duration
+    const realMsTotal = gameDurationMinutes * 60 * 1000;
+    this.tickIntervalMs = Math.floor(realMsTotal / this.totalTicks);
+
+    this.simulatedSeconds = 9 * 3600 + 30 * 60; // Start market at 09:30:00 AM
+    this.priceHistory = [];
     this.intervalId = null;
-    this.active = false;
   }
 
-  start(durationMinutes = 10, gameSpeed = 26) {
-    this.durationMinutes = durationMinutes;
-    this.gameSpeed = gameSpeed;
-    this.active = true;
+  getSimTimeFormatted() {
+    const hours = Math.floor(this.simulatedSeconds / 3600);
+    const mins = Math.floor((this.simulatedSeconds % 3600) / 60);
+    const secs = this.simulatedSeconds % 60;
+    
+    const hStr = String(hours > 12 ? hours - 12 : hours).padStart(2, '0');
+    const mStr = String(mins).padStart(2, '0');
+    const sStr = String(secs).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
 
-    this.intervalId = setInterval(() => this.tick(), 500);
+    return `${hStr}:${mStr}:${sStr} ${ampm}`;
   }
 
-  stop() {
-    this.active = false;
+  start() {
     if (this.intervalId) clearInterval(this.intervalId);
+    this.intervalId = setInterval(() => this.tick(), this.tickIntervalMs);
   }
 
   tick() {
-    if (!this.active) return;
+    // Advance simulation time by 15 seconds
+    this.simulatedSeconds += this.simSecsPerTick;
 
-    this.clockSeconds += Math.round(this.gameSpeed / 2);
+    // Run bot actions
+    this.bots.forEach((bot) => bot.onTick());
+
     const currentMid = this.orderBook.getMidPrice();
+    const timeStr = this.getSimTimeFormatted();
 
-    this.priceHistory.push(currentMid);
-    if (this.priceHistory.length > 80) this.priceHistory.shift();
+    // Store rich price history node
+    this.priceHistory.push({
+      price: currentMid,
+      simTimeStr: timeStr,
+      simSecs: this.simulatedSeconds
+    });
 
-    const marketState = {
-      clockSeconds: this.clockSeconds,
-      durationMinutes: this.durationMinutes,
-      midPrice: currentMid,
-      lastPrice: this.orderBook.lastPrice,
-      priceHistory: this.priceHistory
-    };
+    // Cap total array length to 1 trading day (2160 steps)
+    if (this.priceHistory.length > this.totalTicks) {
+      this.priceHistory.shift();
+    }
 
-    // Execute Bot Behaviors
-    this.bots.forEach(bot => bot.onTick(marketState));
-
-    // Emit tick data to UI and Network
     if (this.eventBus) {
       this.eventBus.emit('TICK', {
-        ...marketState,
+        midPrice: currentMid,
+        simTimeStr: timeStr,
+        priceHistory: this.priceHistory,
         bids: this.orderBook.bids,
         asks: this.orderBook.asks
       });
     }
+  }
+
+  stop() {
+    if (this.intervalId) clearInterval(this.intervalId);
   }
 }
