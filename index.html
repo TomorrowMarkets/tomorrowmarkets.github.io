@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tomorrow Markets | High-Frequency Trading Simulator</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --panel: #111827;
+      --border: #1f2937;
+      --green: #10b981;
+      --red: #ef4444;
+      --text: #f3f4f6;
+      --subtext: #9ca3af;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'JetBrains Mono', monospace, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      padding: 12px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand { font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; color: #3b82f6; }
+    .clock-badge { background: #1e293b; padding: 4px 10px; border-radius: 4px; font-size: 0.85rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: 280px 1fr 320px;
+      flex: 1;
+      gap: 1px;
+      background: var(--border);
+    }
+    .panel { background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    h3 { font-size: 0.85rem; text-transform: uppercase; color: var(--subtext); letter-spacing: 0.5px; }
+    
+    /* Order Book UI */
+    .ob-table { width: 100%; font-size: 0.85rem; border-collapse: collapse; }
+    .ob-table td { padding: 3px 0; font-variant-numeric: tabular-nums; }
+    .ask-row { color: var(--red); }
+    .bid-row { color: var(--green); }
+    .spread-bar { text-align: center; padding: 6px 0; font-size: 0.9rem; font-weight: bold; background: #1e293b; }
+
+    /* Chart */
+    canvas { width: 100%; height: 100%; background: #0b0f19; border-radius: 4px; }
+
+    /* Controls */
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    label { font-size: 0.75rem; color: var(--subtext); }
+    input, select, button {
+      background: #1f2937; border: 1px solid #374151; color: #fff; padding: 8px; border-radius: 4px;
+      font-family: inherit; font-size: 0.9rem;
+    }
+    .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-buy { background: var(--green); border: none; cursor: pointer; font-weight: bold; }
+    .btn-sell { background: var(--red); border: none; cursor: pointer; font-weight: bold; }
+    .btn-buy:hover { opacity: 0.9; }
+    .btn-sell:hover { opacity: 0.9; }
+
+    /* Portfolio Stats */
+    .stat-row { display: flex; justify-content: space-between; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">TOMORROW MARKETS <span style="font-size:0.75rem; color:var(--subtext)">v0.1</span></div>
+    <div class="clock-badge">Market Time: <span id="market-time">09:30:00</span> (Speed: 26x)</div>
+    <div>Session PnL: <span id="pnl-header" style="color:var(--green)">+$0.00</span></div>
+  </header>
+
+  <div class="grid">
+    <!-- Order Book -->
+    <div class="panel">
+      <h3>Limit Order Book</h3>
+      <table class="ob-table">
+        <thead><tr style="color:var(--subtext)"><th align="left">Price</th><th align="right">Size</th></tr></thead>
+        <tbody id="asks-body"></tbody>
+      </table>
+      <div class="spread-bar" id="mid-price">$100.00</div>
+      <table class="ob-table">
+        <tbody id="bids-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Chart -->
+    <div class="panel">
+      <h3>Live Price Action (1s Ticks)</h3>
+      <div style="flex:1; position:relative;">
+        <canvas id="chartCanvas"></canvas>
+      </div>
+    </div>
+
+    <!-- Execution & Portfolio -->
+    <div class="panel">
+      <h3>Trade Execution</h3>
+      <div class="form-group">
+        <label>Order Type</label>
+        <select id="order-type">
+          <option value="LIMIT">Limit Order</option>
+          <option value="MARKET">Market Order</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Price ($)</label>
+        <input type="number" id="order-price" value="100.00" step="0.01" />
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="order-qty" value="10" step="1" />
+      </div>
+      <div class="btn-group">
+        <button class="btn-buy" onclick="submitOrder('BUY')">BUY</button>
+        <button class="btn-sell" onclick="submitOrder('SELL')">SELL</button>
+      </div>
+
+      <h3 style="margin-top:20px;">Portfolio</h3>
+      <div class="stat-row"><span>Cash:</span> <span id="portfolio-cash">$10,000.00</span></div>
+      <div class="stat-row"><span>Inventory:</span> <span id="portfolio-qty">0 shares</span></div>
+      <div class="stat-row"><span>Position Value:</span> <span id="portfolio-val">$0.00</span></div>
+    </div>
+  </div>
+
+  <script>
+    // --- STATE ENGINE ---
+    let midPrice = 100.00;
+    let priceHistory = [100.00];
+    let bids = [], asks = [];
+    let cash = 10000.00, inventory = 0;
+    let secondsElapsed = 0;
+
+    // --- ORDER BOOK ENGINE ---
+    function generateBotLiquidity() {
+      bids = []; asks = [];
+      for(let i = 1; i <= 5; i++) {
+        let bidP = (midPrice - i * 0.05 + (Math.random() * 0.02 - 0.01)).toFixed(2);
+        let askP = (midPrice + i * 0.05 + (Math.random() * 0.02 - 0.01)).toFixed(2);
+        bids.push({ price: parseFloat(bidP), size: Math.floor(Math.random() * 50) + 10 });
+        asks.push({ price: parseFloat(askP), size: Math.floor(Math.random() * 50) + 10 });
+      }
+      bids.sort((a,b) => b.price - a.price);
+      asks.sort((a,b) => a.price - b.price);
+    }
+
+    function renderOrderBook() {
+      const asksElem = document.getElementById('asks-body');
+      const bidsElem = document.getElementById('bids-body');
+      
+      asksElem.innerHTML = asks.slice().reverse().map(a => 
+        `<tr class="ask-row"><td>$${a.price.toFixed(2)}</td><td align="right">${a.size}</td></tr>`
+      ).join('');
+
+      bidsElem.innerHTML = bids.map(b => 
+        `<tr class="bid-row"><td>$${b.price.toFixed(2)}</td><td align="right">${b.size}</td></tr>`
+      ).join('');
+
+      document.getElementById('mid-price').innerText = `$${midPrice.toFixed(2)}`;
+    }
+
+    function submitOrder(side) {
+      const type = document.getElementById('order-type').value;
+      const price = parseFloat(document.getElementById('order-price').value);
+      const qty = parseInt(document.getElementById('order-qty').value);
+
+      let execPrice = price;
+      if (type === 'MARKET') {
+        execPrice = side === 'BUY' ? asks[0].price : bids[0].price;
+      }
+
+      if (side === 'BUY') {
+        const cost = execPrice * qty;
+        if (cash >= cost) {
+          cash -= cost;
+          inventory += qty;
+        } else { alert("Insufficient funds!"); return; }
+      } else {
+        if (inventory >= qty) {
+          cash += execPrice * qty;
+          inventory -= qty;
+        } else { alert("Insufficient shares!"); return; }
+      }
+      updatePortfolio();
+    }
+
+    function updatePortfolio() {
+      const posVal = inventory * midPrice;
+      const totalVal = cash + posVal;
+      const pnl = totalVal - 10000.00;
+
+      document.getElementById('portfolio-cash').innerText = `$${cash.toFixed(2)}`;
+      document.getElementById('portfolio-qty').innerText = `${inventory} shares`;
+      document.getElementById('portfolio-val').innerText = `$${posVal.toFixed(2)}`;
+      
+      const pnlElem = document.getElementById('pnl-header');
+      pnlElem.innerText = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+      pnlElem.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+
+    // --- SIMULATION LOOP (1 Tick = 1 Sec) ---
+    setInterval(() => {
+      // Fast Clock: 1 real second = 26 market seconds
+      secondsElapsed += 26;
+      let hours = Math.floor(9 + secondsElapsed / 3600);
+      let mins = Math.floor((secondsElapsed % 3600) / 60);
+      let secs = secondsElapsed % 60;
+      document.getElementById('market-time').innerText = 
+        `${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+
+      // Random Walk Price Drift
+      let drift = (Math.random() - 0.49) * 0.15;
+      midPrice = Math.max(1.00, midPrice + drift);
+      priceHistory.push(midPrice);
+      if(priceHistory.length > 60) priceHistory.shift();
+
+      generateBotLiquidity();
+      renderOrderBook();
+      renderChart();
+      updatePortfolio();
+    }, 1000);
+
+    // --- CANVAS CHART ENGINE ---
+    const canvas = document.getElementById('chartCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function renderChart() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (priceHistory.length < 2) return;
+
+      const minP = Math.min(...priceHistory) * 0.998;
+      const maxP = Math.max(...priceHistory) * 1.002;
+      const stepX = canvas.width / (priceHistory.length - 1);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+
+      priceHistory.forEach((p, i) => {
+        const x = i * stepX;
+        const y = canvas.height - ((p - minP) / (maxP - minP)) * canvas.height;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    // Init
+    generateBotLiquidity();
+    renderOrderBook();
+  </script>
+</body>
+</html>
