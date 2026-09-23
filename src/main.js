@@ -1,5 +1,5 @@
 /**
- * TOMORROW MARKETS - Self-Contained Engine, 100-Bot Ecosystem & UI
+ * TOMORROW MARKETS - Rebalanced Bot Ecosystem (90 Noise, 5 Trend, 5 MR, 3 MM, 3 Whales)
  */
 
 // ===================================================================
@@ -31,7 +31,7 @@ class AccountManager {
     this.shares = 0; // Positive for Long, Negative for Short
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
-    this.initialMarginReq = 1.0; // 100% collateral required for shorting
+    this.initialMarginReq = 1.0;
 
     if (this.eventBus) {
       this.eventBus.on('TRADE', (trade) => this.onTrade(trade));
@@ -52,12 +52,10 @@ class AccountManager {
     const orderCost = execPrice * qty;
 
     if (side === 'BUY') {
-      // Cannot buy if cash balance is 0 or insufficient
       if (this.cash <= 0 || this.cash < orderCost) {
         return { allowed: false, reason: `Insufficient cash ($${this.cash.toFixed(2)} available, $${orderCost.toFixed(2)} required)` };
       }
     } else if (side === 'SELL') {
-      // Selling beyond current long inventory introduces short liability
       const currentLongQty = Math.max(0, this.shares);
       const shortQtyToAdd = qty - currentLongQty;
 
@@ -94,23 +92,14 @@ class AccountManager {
       this.cash -= cost;
 
       if (this.shares < 0) {
-        // Covering existing short position
         const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
         const pnl = (this.avgEntry - price) * shortQtyToCover;
         this.realizedPnL += pnl;
 
-        const remainingBoughtQty = qty - shortQtyToCover;
         this.shares += qty;
-
-        if (this.shares > 0) {
-          // Flipped from short to long
-          this.avgEntry = price;
-        } else if (this.shares === 0) {
-          this.avgEntry = 0;
-        }
-        // If still short (this.shares < 0), avgEntry remains unchanged
+        if (this.shares > 0) this.avgEntry = price;
+        else if (this.shares === 0) this.avgEntry = 0;
       } else {
-        // Adding to existing long position
         const totalCost = (this.shares * this.avgEntry) + cost;
         this.shares += qty;
         this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
@@ -123,23 +112,14 @@ class AccountManager {
       this.cash += revenue;
 
       if (this.shares > 0) {
-        // Closing existing long position
         const longQtyToClose = Math.min(qty, this.shares);
         const pnl = (price - this.avgEntry) * longQtyToClose;
         this.realizedPnL += pnl;
 
-        const remainingSoldQty = qty - longQtyToClose;
         this.shares -= qty;
-
-        if (this.shares < 0) {
-          // Flipped from long to short
-          this.avgEntry = price;
-        } else if (this.shares === 0) {
-          this.avgEntry = 0;
-        }
-        // If still long (this.shares > 0), avgEntry remains unchanged
+        if (this.shares < 0) this.avgEntry = price;
+        else if (this.shares === 0) this.avgEntry = 0;
       } else {
-        // Opening or adding to short position
         const totalShortVal = (Math.abs(this.shares) * this.avgEntry) + revenue;
         this.shares -= qty;
         this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
@@ -274,21 +254,23 @@ class OrderBook {
 }
 
 // ===================================================================
-// 4. 100-BOT MARKET ECOSYSTEM
+// 4. REBALANCED BOT ECOSYSTEM
 // ===================================================================
+
+// 3 Market Makers: Deep bid/ask liquidity ladders
 class MarketMakerBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.spread = 0.08 + Math.random() * 0.15;
-    this.baseQty = Math.floor(Math.random() * 20) + 10;
+    this.spread = 0.04 + Math.random() * 0.06;
+    this.baseQty = Math.floor(Math.random() * 25) + 20;
   }
 
   onTick() {
     this.orderBook.clearPlayerOrders(this.id);
     const mid = this.orderBook.getMidPrice();
 
-    for (let level = 1; level <= 3; level++) {
+    for (let level = 1; level <= 5; level++) {
       const bidPrice = parseFloat((mid - this.spread * level).toFixed(2));
       const askPrice = parseFloat((mid + this.spread * level).toFixed(2));
 
@@ -300,24 +282,26 @@ class MarketMakerBot {
   }
 }
 
+// 90 Noise Traders: Random buy/sell market and limit orders near mid
 class NoiseBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.actProbability = 0.20;
+    this.actProbability = 0.15; // Stochastic execution across 90 bots
   }
 
   onTick() {
     if (Math.random() > this.actProbability) return;
+
     const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const isMarket = Math.random() > 0.35;
-    const qty = Math.floor(Math.random() * 12) + 1;
+    const isMarket = Math.random() > 0.40; // 60% Market, 40% Limit
+    const qty = Math.floor(Math.random() * 10) + 1;
     const mid = this.orderBook.getMidPrice();
 
     if (isMarket) {
       this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty, type: 'MARKET' });
     } else {
-      const offset = (Math.random() - 0.5) * 0.50;
+      const offset = (Math.random() - 0.5) * 0.30;
       const price = parseFloat((mid + offset).toFixed(2));
       if (price > 0) {
         this.orderBook.processOrder({ playerId: this.id, side, price, qty, type: 'LIMIT' });
@@ -326,11 +310,12 @@ class NoiseBot {
   }
 }
 
+// 5 Trend Traders: Momentum-driven order placement
 class TrendBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.lookback = Math.floor(Math.random() * 4) + 3;
+    this.lookback = Math.floor(Math.random() * 5) + 4;
   }
 
   onTick(history) {
@@ -340,19 +325,20 @@ class TrendBot {
     const endP = typeof recent[recent.length - 1] === 'number' ? recent[recent.length - 1] : recent[recent.length - 1].price;
     const diff = endP - startP;
 
-    if (Math.abs(diff) >= 0.12) {
+    if (Math.abs(diff) >= 0.15) {
       const side = diff > 0 ? 'BUY' : 'SELL';
-      const qty = Math.floor(Math.random() * 20) + 5;
+      const qty = Math.floor(Math.random() * 15) + 5;
       this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty, type: 'MARKET' });
     }
   }
 }
 
+// 5 Mean Reversion Traders: Counter-trend orders when price deviates from SMA
 class MeanReversionBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.period = 10;
+    this.period = 12;
   }
 
   onTick(history) {
@@ -363,25 +349,26 @@ class MeanReversionBot {
     const mid = this.orderBook.getMidPrice();
     const dev = mid - sma;
 
-    if (dev > 0.25) {
-      this.orderBook.processOrder({ playerId: this.id, side: 'SELL', price: 0, qty: 15, type: 'MARKET' });
-    } else if (dev < -0.25) {
-      this.orderBook.processOrder({ playerId: this.id, side: 'BUY', price: 0, qty: 15, type: 'MARKET' });
+    if (dev > 0.30) {
+      this.orderBook.processOrder({ playerId: this.id, side: 'SELL', price: 0, qty: 10, type: 'MARKET' });
+    } else if (dev < -0.30) {
+      this.orderBook.processOrder({ playerId: this.id, side: 'BUY', price: 0, qty: 10, type: 'MARKET' });
     }
   }
 }
 
+// 3 Whales: Occasional large block liquidity shocks
 class WhaleBot {
   constructor(id, orderBook) {
     this.id = id;
     this.orderBook = orderBook;
-    this.triggerThreshold = 0.03;
+    this.triggerThreshold = 0.02;
   }
 
   onTick() {
     if (Math.random() > this.triggerThreshold) return;
     const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const blockQty = Math.floor(Math.random() * 120) + 80;
+    const blockQty = Math.floor(Math.random() * 80) + 40;
 
     this.orderBook.processOrder({
       playerId: this.id,
@@ -401,11 +388,12 @@ class BotFleet {
   }
 
   initFleet() {
-    for (let i = 0; i < 10; i++) this.bots.push(new MarketMakerBot(`mm_${i}`, this.orderBook));
-    for (let i = 0; i < 50; i++) this.bots.push(new NoiseBot(`retail_${i}`, this.orderBook));
-    for (let i = 0; i < 20; i++) this.bots.push(new TrendBot(`trend_${i}`, this.orderBook));
-    for (let i = 0; i < 15; i++) this.bots.push(new MeanReversionBot(`mr_${i}`, this.orderBook));
-    for (let i = 0; i < 5; i++) this.bots.push(new WhaleBot(`whale_${i}`, this.orderBook));
+    // Exact requested breakdown
+    for (let i = 0; i < 90; i++) this.bots.push(new NoiseBot(`noise_${i}`, this.orderBook));
+    for (let i = 0; i < 5; i++)  this.bots.push(new TrendBot(`trend_${i}`, this.orderBook));
+    for (let i = 0; i < 5; i++)  this.bots.push(new MeanReversionBot(`mr_${i}`, this.orderBook));
+    for (let i = 0; i < 3; i++)  this.bots.push(new MarketMakerBot(`mm_${i}`, this.orderBook));
+    for (let i = 0; i < 3; i++)  this.bots.push(new WhaleBot(`whale_${i}`, this.orderBook));
   }
 
   onTick(history) {
@@ -469,13 +457,7 @@ class ChartUI {
     this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
     this.clockDisplay = document.getElementById('sim-clock');
 
-    this.timeframeSteps = {
-      '1M': 4,
-      '5M': 20,
-      '10M': 40,
-      '1H': 240,
-      'ALL': null
-    };
+    this.timeframeSteps = { '1M': 4, '5M': 20, '10M': 40, '1H': 240, 'ALL': null };
     this.activeTimeframe = '5M';
     this.history = [];
 
@@ -537,7 +519,6 @@ class ChartUI {
     }
     const range = max - min;
 
-    // Grid lines
     this.ctx.strokeStyle = '#1e293b';
     this.ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
@@ -548,7 +529,6 @@ class ChartUI {
       this.ctx.stroke();
     }
 
-    // Chart Line
     this.ctx.beginPath();
     this.ctx.strokeStyle = '#3b82f6';
     this.ctx.lineWidth = 2;
@@ -568,7 +548,6 @@ class ChartUI {
 
     this.ctx.stroke();
 
-    // Labels
     this.ctx.fillStyle = '#64748b';
     this.ctx.font = '10px monospace';
     this.ctx.fillText(`$${max.toFixed(2)}`, 8, 14);
@@ -633,7 +612,6 @@ class ControlsUI {
     const qty = parseFloat(this.qtyInput ? this.qtyInput.value : 10) || 10;
     const price = parseFloat(this.priceInput ? this.priceInput.value : 100) || 100;
 
-    // Validate balance and margin requirements prior to submission
     if (this.accountManager) {
       const check = this.accountManager.canPlaceOrder(side, this.orderType, price, qty, this.lastMidPrice);
       if (!check.allowed) {
@@ -721,7 +699,7 @@ class GameLoop {
   start() {
     if (this.intervalId) clearInterval(this.intervalId);
     this.intervalId = setInterval(() => this.tick(), this.tickIntervalMs);
-    this.tick(); // Execute immediately on start
+    this.tick();
   }
 
   tick() {
@@ -785,7 +763,6 @@ function initApp() {
     orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
   }
 
-  // Seed liquidity and start loop automatically regardless of lobby UI state
   seedInitialLiquidity();
   accountManager.broadcastState();
   gameLoop.start();
