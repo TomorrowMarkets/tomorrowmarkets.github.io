@@ -1,60 +1,54 @@
-
-// src/AccountManager.js
 export class AccountManager {
-  constructor(eventBus, initialCash = 10000) {
+  constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
-    this.cash = initialCash;
+    this.playerId = playerId;
+    this.cash = 10000.00;
     this.shares = 0;
-    this.avgEntry = 0;
-    this.realizedPnL = 0;
+    this.avgEntry = 0.00;
+    this.realizedPnL = 0.00;
 
     if (this.eventBus) {
-      this.eventBus.on('TRADE_EXECUTED', (trade) => this.onTradeExecuted(trade));
+      this.eventBus.on('TRADE', (trade) => this.onTrade(trade));
     }
   }
 
-  onTradeExecuted({ buyerId, sellerId, price, qty, myId }) {
-    const isBuyer = buyerId === myId;
-    const isSeller = sellerId === myId;
+  setPlayerId(id) {
+    this.playerId = id;
+  }
 
-    if (!isBuyer && !isSeller) return;
+  onTrade(trade) {
+    const { buyerId, sellerId, price, qty } = trade;
+    let updated = false;
 
-    if (isBuyer) {
+    if (buyerId === this.playerId) {
       const cost = price * qty;
       this.cash -= cost;
-      const totalShares = this.shares + qty;
-      this.avgEntry = totalShares > 0 ? ((this.shares * this.avgEntry) + cost) / totalShares : 0;
-      this.shares = totalShares;
+      const totalCost = (this.shares * this.avgEntry) + cost;
+      this.shares += qty;
+      this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
+      updated = true;
     }
 
-    if (isSeller) {
-      this.cash += price * qty;
+    if (sellerId === this.playerId) {
+      const revenue = price * qty;
+      this.cash += revenue;
       const pnl = (price - this.avgEntry) * qty;
       this.realizedPnL += pnl;
       this.shares -= qty;
-      if (this.shares === 0) this.avgEntry = 0;
+      if (this.shares <= 0) {
+        this.shares = 0;
+        this.avgEntry = 0;
+      }
+      updated = true;
     }
 
-    if (this.eventBus) {
-      this.eventBus.emit('PORTFOLIO_UPDATED', this.getMetrics());
+    if (updated && this.eventBus) {
+      this.eventBus.emit('ACCOUNT_UPDATE', {
+        cash: this.cash,
+        shares: this.shares,
+        avgEntry: this.avgEntry,
+        realizedPnL: this.realizedPnL
+      });
     }
-  }
-
-  getMetrics(currentMidPrice = 100.00) {
-    const posValue = this.shares * currentMidPrice;
-    const unrealizedPnL = this.shares * (currentMidPrice - this.avgEntry);
-    const totalEquity = this.cash + posValue;
-    const totalPnL = totalEquity - 10000.00;
-
-    return {
-      cash: this.cash,
-      shares: this.shares,
-      avgEntry: this.avgEntry,
-      posValue,
-      unrealizedPnL,
-      realizedPnL: this.realizedPnL,
-      totalEquity,
-      totalPnL
-    };
   }
 }
