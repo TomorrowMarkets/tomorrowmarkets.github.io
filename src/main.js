@@ -9,7 +9,7 @@ const SIM_SECS_PER_TICK = 15;
 const GAME_DURATION_MINUTES = 10;             // real-world length of the whole trading day
 const TOTAL_TICKS = (SESSION_CLOSE_SECS - SESSION_OPEN_SECS) / SIM_SECS_PER_TICK; // 2040
 const STARTING_CASH = 10000;
-const BOOK_DEPTH = 16;              // resting orders per side sent to the UI and to clients (UI shows what fits)
+const BOOK_LEVELS = 15;             // price levels per side shown in the order book (and sent to clients)
 const MAX_BACKLOG_TICKS = 40;       // a stall longer than this pauses the day instead of fast-forwarding it
 const NOISE_ORDER_TTL_TICKS = 40;   // noise-bot limit orders expire after 10 sim-minutes (keeps the book small)
 
@@ -402,6 +402,19 @@ class OrderBook {
   }
 }
 
+// Collapse individual resting orders (already sorted best-first) into
+// price levels: one row per price with the total quantity at that price.
+function aggregateLevels(orders, depth) {
+  const levels = [];
+  for (const o of orders) {
+    const last = levels[levels.length - 1];
+    if (last && last.price === o.price) last.qty += o.qty;
+    else if (levels.length === depth) break;
+    else levels.push({ price: o.price, qty: o.qty });
+  }
+  return levels;
+}
+
 // ===================================================================
 // 4. STOP LOSS / TAKE PROFIT (authority only)
 // An entry order may carry sl/tp levels. Every fill of that order adds
@@ -666,12 +679,6 @@ class BotFleet {
 // 6. UI COMPONENTS
 // ===================================================================
 function createToaster(container) {
-  const tones = {
-    info: 'bg-slate-900 border-slate-700 text-slate-200',
-    success: 'bg-emerald-950 border-emerald-700 text-emerald-200',
-    warn: 'bg-amber-950 border-amber-700 text-amber-200',
-    error: 'bg-red-950 border-red-800 text-red-200'
-  };
   return (text, level = 'info') => {
     if (!container) {
       console.log(`[${level}] ${text}`);
@@ -679,7 +686,7 @@ function createToaster(container) {
     }
     while (container.children.length >= 4) container.firstChild.remove();
     const el = document.createElement('div');
-    el.className = `pointer-events-auto max-w-xs px-3 py-2 rounded-lg border text-xs font-mono shadow-lg transition-opacity duration-300 ${tones[level] || tones.info}`;
+    el.className = `toast toast-${['success', 'warn', 'error'].includes(level) ? level : 'info'}`;
     el.setAttribute('role', level === 'error' ? 'alert' : 'status');
     el.textContent = text;
     container.appendChild(el);
@@ -707,39 +714,34 @@ class BookUI {
     });
   }
 
+  // bids / asks arrive as aggregated price levels, best first: [{ price, qty }]
   render(bids = [], asks = [], midPrice = 100.0) {
     if (this.midDisplay) this.midDisplay.innerText = '$' + midPrice.toFixed(2);
 
     const bestBid = bids.length > 0 ? bids[0].price : 0;
     const bestAsk = asks.length > 0 ? asks[0].price : 0;
-    const spread = bestAsk && bestBid ? (bestAsk - bestBid).toFixed(2) : '0.00';
-    if (this.spreadDisplay) this.spreadDisplay.innerText = '$' + spread;
+    if (this.spreadDisplay) this.spreadDisplay.innerText = '$' + (bestAsk && bestBid ? (bestAsk - bestBid).toFixed(2) : '0.00');
 
-    const row = (o, tone) => `
-      <div class="grid grid-cols-3 text-${tone}-400 hover:bg-${tone}-500/10 px-1 py-0.5 rounded transition-colors font-mono text-xs">
-        <span>$${o.price.toFixed(2)}</span>
-        <span class="text-right font-bold">${o.qty}</span>
-        <span class="text-right text-slate-500">${(o.price * o.qty).toFixed(0)}</span>
-      </div>`;
+    // Depth bars are scaled to the largest level currently on screen.
+    const maxQty = Math.max(1, ...bids.slice(0, BOOK_LEVELS).map((l) => l.qty), ...asks.slice(0, BOOK_LEVELS).map((l) => l.qty));
+    const row = (lvl, side) => {
+      if (!lvl) return '<div class="lvl"></div>';
+      const depth = ((lvl.qty / maxQty) * 100).toFixed(1);
+      const total = Math.round(lvl.price * lvl.qty).toLocaleString('en-US');
+      return `<div class="lvl lvl-${side}" style="--d:${depth}%"><span>$${lvl.price.toFixed(2)}</span><span>${lvl.qty}</span><span>${total}</span></div>`;
+    };
 
     if (this.asksContainer) {
-      const n = this.rowsThatFit(this.asksContainer);
-      this.asksContainer.innerHTML = asks.slice(0, n).reverse().map((a) => row(a, 'red')).join('');
+      // Worst ask at the top, best ask next to the spread; empty slots pad the top.
+      const slots = [];
+      for (let i = BOOK_LEVELS - 1; i >= 0; i--) slots.push(row(asks[i], 'ask'));
+      this.asksContainer.innerHTML = slots.join('');
     }
     if (this.bidsContainer) {
-      const n = this.rowsThatFit(this.bidsContainer);
-      this.bidsContainer.innerHTML = bids.slice(0, n).map((b) => row(b, 'emerald')).join('');
+      const slots = [];
+      for (let i = 0; i < BOOK_LEVELS; i++) slots.push(row(bids[i], 'bid'));
+      this.bidsContainer.innerHTML = slots.join('');
     }
-  }
-
-  // Show as many levels as the column has room for, so a taller book
-  // (short-window layout) fills up instead of leaving empty space.
-  rowsThatFit(container) {
-    const probe = container.firstElementChild;
-    const probeHeight = probe ? probe.getBoundingClientRect().height : 0;
-    if (probeHeight > 0) this.rowPx = probeHeight + 2; // + space-y-0.5 gap
-    if (!this.rowPx || container.clientHeight === 0) return 7;
-    return Math.max(1, Math.floor((container.clientHeight + 2) / this.rowPx));
   }
 }
 
@@ -766,8 +768,7 @@ class ChartUI {
         const tf = e.target.getAttribute('data-tf');
         if (tf && tf in this.timeframeSteps) {
           this.activeTimeframe = tf;
-          buttons.forEach((b) => (b.className = 'tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white transition-colors cursor-pointer'));
-          e.target.className = 'tf-btn px-2 py-0.5 rounded bg-blue-600 text-white font-bold transition-colors cursor-pointer';
+          buttons.forEach((b) => b.classList.toggle('is-active', b === e.target));
           this.draw();
         }
       });
@@ -782,10 +783,10 @@ class ChartUI {
       const orders = (data.playerOrders && data.playerOrders[me]) || [];
       const brackets = (data.brackets && data.brackets[me]) || [];
       this.levels = [
-        ...orders.map((o) => ({ price: o.price, color: '#94a3b8', label: `${o.side} ${o.qty}` })),
+        ...orders.map((o) => ({ price: o.price, color: '#5A6B88', label: `${o.side} ${o.qty}` })),
         ...brackets.flatMap((b) => [
-          b.sl != null ? { price: b.sl, color: '#ef4444', label: 'SL' } : null,
-          b.tp != null ? { price: b.tp, color: '#10b981', label: 'TP' } : null
+          b.sl != null ? { price: b.sl, color: '#C23B32', label: 'SL' } : null,
+          b.tp != null ? { price: b.tp, color: '#0F8A5F', label: 'TP' } : null
         ].filter(Boolean))
       ];
       this.draw();
@@ -799,9 +800,17 @@ class ChartUI {
     // Hidden tabs can't see the chart anyway; skip the work and redraw on return.
     if (document.hidden || !this.canvas || !this.ctx || this.history.length === 0) return;
 
-    const width = (this.canvas.width = this.canvas.parentElement.clientWidth || 400);
-    const height = (this.canvas.height = this.canvas.parentElement.clientHeight || 200);
-    this.ctx.clearRect(0, 0, width, height);
+    // Size the backing store for the screen's pixel ratio so thin lines stay crisp.
+    const width = this.canvas.parentElement.clientWidth || 400;
+    const height = this.canvas.parentElement.clientHeight || 200;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
+      this.canvas.width = Math.round(width * dpr);
+      this.canvas.height = Math.round(height * dpr);
+    }
+    const ctx = this.ctx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
 
     const isAll = this.activeTimeframe === 'ALL';
     const visibleData = isAll ? this.history : this.history.slice(-this.timeframeSteps[this.activeTimeframe]);
@@ -821,79 +830,97 @@ class ChartUI {
     const range = max - min;
     const yFor = (p) => height - ((p - min) / range) * height;
 
-    this.ctx.strokeStyle = '#1e293b';
-    this.ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(11, 29, 71, 0.07)';
+    ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
-      const y = (height / 4) * i;
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, y);
-      this.ctx.lineTo(width, y);
-      this.ctx.stroke();
+      const y = Math.round((height / 4) * i) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
     }
 
-    this.ctx.beginPath();
-    this.ctx.strokeStyle = '#3b82f6';
-    this.ctx.lineWidth = 2;
     const maxSteps = isAll ? visibleData.length : this.timeframeSteps[this.activeTimeframe];
     const stepWidth = width / (maxSteps - 1);
     const startOffsetIndex = maxSteps - visibleData.length;
-    visibleData.forEach((item, index) => {
-      const x = (startOffsetIndex + index) * stepWidth;
-      const y = yFor(item.price);
-      if (index === 0) this.ctx.moveTo(x, y);
-      else this.ctx.lineTo(x, y);
-    });
-    this.ctx.stroke();
+    const pts = visibleData.map((item, index) => [(startOffsetIndex + index) * stepWidth, yFor(item.price)]);
+
+    // Gold, see-through fill under the price line
+    const fill = ctx.createLinearGradient(0, 0, 0, height);
+    fill.addColorStop(0, 'rgba(176, 141, 60, 0.22)');
+    fill.addColorStop(1, 'rgba(176, 141, 60, 0)');
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], height);
+    pts.forEach(([x, y]) => ctx.lineTo(x, y));
+    ctx.lineTo(pts[pts.length - 1][0], height);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    // Navy price line
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.strokeStyle = '#0B1D47';
+    ctx.lineWidth = 1.75;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Last price marker
+    const [lx, ly] = pts[pts.length - 1];
+    ctx.fillStyle = 'rgba(176, 141, 60, 0.25)';
+    ctx.beginPath();
+    ctx.arc(lx - 4, ly, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#B08D3C';
+    ctx.beginPath();
+    ctx.arc(lx - 4, ly, 3, 0, Math.PI * 2);
+    ctx.fill();
 
     // Your working orders and SL/TP levels (only those inside the visible range)
-    this.ctx.save();
-    this.ctx.setLineDash([4, 4]);
-    this.ctx.lineWidth = 1;
-    this.ctx.font = '10px monospace';
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.font = '500 10.5px Inter, system-ui, sans-serif';
     for (const lv of this.levels) {
       if (lv.price < min || lv.price > max) continue;
-      const y = yFor(lv.price);
-      this.ctx.strokeStyle = lv.color;
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, y);
-      this.ctx.lineTo(width, y);
-      this.ctx.stroke();
+      const y = Math.round(yFor(lv.price)) + 0.5;
+      ctx.strokeStyle = lv.color;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
       const text = `${lv.label} $${lv.price.toFixed(2)}`;
-      this.ctx.fillStyle = lv.color;
-      this.ctx.fillText(text, width - this.ctx.measureText(text).width - 6, y - 3);
+      ctx.fillStyle = lv.color;
+      ctx.fillText(text, width - ctx.measureText(text).width - 6, y - 4);
     }
-    this.ctx.restore();
+    ctx.restore();
 
-    this.ctx.fillStyle = '#64748b';
-    this.ctx.font = '10px monospace';
-    this.ctx.fillText(`$${max.toFixed(2)}`, 8, 14);
-    this.ctx.fillText(`$${min.toFixed(2)}`, 8, height - 6);
+    ctx.fillStyle = '#8C99B0';
+    ctx.font = '10.5px Inter, system-ui, sans-serif';
+    ctx.fillText(`$${max.toFixed(2)}`, 4, 13);
+    ctx.fillText(`$${min.toFixed(2)}`, 4, height - 5);
   }
 }
 
-const BTN_TONES = {
-  neutral: 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700',
-  danger: 'bg-red-950/80 hover:bg-red-900 text-red-300 hover:text-white border-red-800',
-  primary: 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500'
-};
+const MINI_TONES = { neutral: 'mini', danger: 'mini mini-danger', primary: 'mini mini-primary' };
 
 function actionBtn(action, id, label, tone = 'neutral') {
-  return `<button type="button" data-action="${action}" data-id="${escapeHtml(id)}" class="text-[10px] ${BTN_TONES[tone]} border px-1.5 py-0.5 rounded transition-colors cursor-pointer focus-visible:outline focus-visible:outline-1 focus-visible:outline-blue-400">${label}</button>`;
+  return `<button type="button" data-action="${action}" data-id="${escapeHtml(id)}" class="${MINI_TONES[tone]}">${label}</button>`;
 }
 
 function levelTags(sl, tp) {
   const tags = [];
-  if (sl != null) tags.push(`<span class="text-red-400">SL $${sl.toFixed(2)}</span>`);
-  if (tp != null) tags.push(`<span class="text-emerald-400">TP $${tp.toFixed(2)}</span>`);
-  return tags.length ? `<div class="mt-0.5 flex gap-3 text-[10px]">${tags.join('')}</div>` : '';
+  if (sl != null) tags.push(`<span class="t-ask">SL $${sl.toFixed(2)}</span>`);
+  if (tp != null) tags.push(`<span class="t-bid">TP $${tp.toFixed(2)}</span>`);
+  return tags.length ? `<div class="mt-1 flex gap-3 text-[10.5px] num">${tags.join('')}</div>` : '';
 }
 
 function editFields(fields) {
-  return `<div class="grid grid-cols-2 gap-1.5 mt-1.5">${fields.map((f) => `
+  return `<div class="grid grid-cols-2 gap-1.5 mt-2">${fields.map((f) => `
     <label class="block">
-      <span class="block text-[9px] text-slate-500 uppercase mb-0.5">${f.label}</span>
+      <span class="block text-[10px] t-muted mb-0.5">${f.label}</span>
       <input data-field="${f.name}" type="number" inputmode="decimal" step="${f.step || '0.01'}" min="0" value="${f.value ?? ''}" placeholder="${f.placeholder || ''}"
-        class="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-white font-mono text-[11px] focus:outline-none focus:border-blue-500 placeholder:text-slate-600" />
+        class="field field-sm num" />
     </label>`).join('')}</div>`;
 }
 
@@ -971,10 +998,7 @@ class ControlsUI {
   setMarketOpen(open) {
     this.marketOpen = open;
     for (const btn of [this.btnBuy, this.btnSell]) {
-      if (!btn) continue;
-      btn.disabled = !open;
-      btn.classList.toggle('opacity-40', !open);
-      btn.classList.toggle('cursor-not-allowed', !open);
+      if (btn) btn.disabled = !open;
     }
     if (!open) {
       this.editing = null;
@@ -984,11 +1008,9 @@ class ControlsUI {
 
   setOrderType(type) {
     this.orderType = type;
-    const on = 'py-1 text-center rounded bg-blue-600 text-white font-bold transition-colors cursor-pointer';
-    const off = 'py-1 text-center rounded text-slate-400 hover:text-white transition-colors cursor-pointer';
-    if (this.typeMarketBtn) this.typeMarketBtn.className = type === 'MARKET' ? on : off;
-    if (this.typeLimitBtn) this.typeLimitBtn.className = type === 'MARKET' ? off : on;
-    if (this.priceContainer) this.priceContainer.classList.toggle('opacity-30', type === 'MARKET');
+    if (this.typeMarketBtn) this.typeMarketBtn.classList.toggle('is-active', type === 'MARKET');
+    if (this.typeLimitBtn) this.typeLimitBtn.classList.toggle('is-active', type !== 'MARKET');
+    if (this.priceContainer) this.priceContainer.classList.toggle('opacity-40', type === 'MARKET');
     if (this.priceContainer) this.priceContainer.classList.toggle('pointer-events-none', type === 'MARKET');
   }
 
@@ -1189,7 +1211,7 @@ class ControlsUI {
 
     if (this.openOrdersCount) this.openOrdersCount.innerText = this.myOrders.length;
     const html = this.myOrders.length === 0
-      ? `<div class="text-[10px] text-slate-600 italic py-1">No active open orders</div>`
+      ? `<div class="empty">No active open orders</div>`
       : this.myOrders.map((o) => this.orderRow(o)).join('');
     this.replaceHtml(this.openOrdersList, html);
   }
@@ -1206,23 +1228,20 @@ class ControlsUI {
 
     if (this.bracketsCount) this.bracketsCount.innerText = this.myBrackets.length;
     const html = this.myBrackets.length === 0
-      ? `<div class="text-[10px] text-slate-600 italic py-1">No stop loss or take profit on open positions</div>`
+      ? `<div class="empty">No stop loss or take profit on open positions</div>`
       : this.myBrackets.map((b) => this.bracketRow(b)).join('');
     this.replaceHtml(this.bracketsList, html);
   }
 
   orderRow(o) {
-    const isBuy = o.side === 'BUY';
-    const sideColor = isBuy ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20';
     const editing = this.editing && this.editing.kind === 'order' && this.editing.id === o.id;
-
     const header = `
       <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-2">
-          <span class="text-[9px] font-bold px-1 rounded border ${sideColor}">${o.side}</span>
-          <span class="text-white font-bold">${o.qty}</span>
-          <span class="text-slate-400">@</span>
-          <span class="text-slate-200">$${o.price.toFixed(2)}</span>
+        <div class="flex items-center gap-2 num">
+          <span class="chip ${o.side === 'BUY' ? 'chip-buy' : 'chip-sell'}">${o.side}</span>
+          <span class="font-semibold t-ink">${o.qty}</span>
+          <span class="t-faint">@</span>
+          <span class="t-ink">$${o.price.toFixed(2)}</span>
         </div>
         ${editing ? '' : `<div class="flex gap-1">${actionBtn('edit-order', o.id, 'Edit')}${actionBtn('cancel-order', o.id, 'Delete', 'danger')}</div>`}
       </div>`;
@@ -1233,24 +1252,21 @@ class ControlsUI {
           { name: 'qty', label: 'Quantity', value: o.qty, step: '1' },
           { name: 'sl', label: 'Stop loss', value: o.sl != null ? o.sl.toFixed(2) : '', placeholder: 'None' },
           { name: 'tp', label: 'Take profit', value: o.tp != null ? o.tp.toFixed(2) : '', placeholder: 'None' }
-        ]) + `<div class="flex justify-end gap-1 mt-1.5">${actionBtn('close-edit', o.id, 'Close')}${actionBtn('save-order', o.id, 'Save', 'primary')}</div>`
+        ]) + `<div class="flex justify-end gap-1 mt-2">${actionBtn('close-edit', o.id, 'Close')}${actionBtn('save-order', o.id, 'Save', 'primary')}</div>`
       : levelTags(o.sl, o.tp);
 
-    return `<div data-row="${escapeHtml(o.id)}" ${editing ? `data-editing="order:${escapeHtml(o.id)}"` : ''}
-      class="bg-slate-950 border ${editing ? 'border-blue-600/60' : 'border-slate-800/80'} rounded px-2 py-1 text-[11px] font-mono">${header}${body}</div>`;
+    return `<div data-row="${escapeHtml(o.id)}" ${editing ? `data-editing="order:${escapeHtml(o.id)}"` : ''} class="row-card${editing ? ' is-editing' : ''}">${header}${body}</div>`;
   }
 
   bracketRow(b) {
     const isLong = b.exitSide === 'SELL';
-    const badge = isLong ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20';
     const editing = this.editing && this.editing.kind === 'bracket' && this.editing.id === b.id;
-
     const header = `
       <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-2">
-          <span class="text-[9px] font-bold px-1 rounded border ${badge}">${isLong ? 'LONG' : 'SHORT'}</span>
-          <span class="text-white font-bold">${b.qty}</span>
-          <span class="text-slate-500">shares</span>
+        <div class="flex items-center gap-2 num">
+          <span class="chip ${isLong ? 'chip-buy' : 'chip-sell'}">${isLong ? 'LONG' : 'SHORT'}</span>
+          <span class="font-semibold t-ink">${b.qty}</span>
+          <span class="t-faint">shares</span>
         </div>
         ${editing ? '' : `<div class="flex gap-1">${actionBtn('edit-bracket', b.id, 'Edit')}${actionBtn('remove-bracket', b.id, 'Remove', 'danger')}</div>`}
       </div>`;
@@ -1259,11 +1275,10 @@ class ControlsUI {
       ? editFields([
           { name: 'sl', label: 'Stop loss', value: b.sl != null ? b.sl.toFixed(2) : '', placeholder: 'None' },
           { name: 'tp', label: 'Take profit', value: b.tp != null ? b.tp.toFixed(2) : '', placeholder: 'None' }
-        ]) + `<div class="flex justify-end gap-1 mt-1.5">${actionBtn('close-edit', b.id, 'Close')}${actionBtn('save-bracket', b.id, 'Save', 'primary')}</div>`
+        ]) + `<div class="flex justify-end gap-1 mt-2">${actionBtn('close-edit', b.id, 'Close')}${actionBtn('save-bracket', b.id, 'Save', 'primary')}</div>`
       : levelTags(b.sl, b.tp);
 
-    return `<div data-row="${escapeHtml(b.id)}" ${editing ? `data-editing="bracket:${escapeHtml(b.id)}"` : ''}
-      class="bg-slate-950 border ${editing ? 'border-blue-600/60' : 'border-slate-800/80'} rounded px-2 py-1 text-[11px] font-mono">${header}${body}</div>`;
+    return `<div data-row="${escapeHtml(b.id)}" ${editing ? `data-editing="bracket:${escapeHtml(b.id)}"` : ''} class="row-card${editing ? ' is-editing' : ''}">${header}${body}</div>`;
   }
 
   // ---- Account panel -----------------------------------------------------
@@ -1273,13 +1288,13 @@ class ControlsUI {
     if (this.portCash) this.portCash.innerText = fmtMoney(acc.cash);
     if (this.portShares) {
       this.portShares.innerText = acc.shares;
-      this.portShares.className = `font-bold ${acc.shares < 0 ? 'text-red-400' : acc.shares > 0 ? 'text-emerald-400' : 'text-slate-300'}`;
+      this.portShares.className = acc.shares < 0 ? 'neg' : acc.shares > 0 ? 'pos' : '';
     }
     if (this.portAvgPrice) this.portAvgPrice.innerText = fmtMoney(acc.avgEntry);
     if (this.portRealized) {
       const r = acc.realizedPnL || 0;
       this.portRealized.innerText = fmtSigned(r);
-      this.portRealized.className = `font-bold ${round2(r) >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+      this.portRealized.className = round2(r) >= 0 ? 'pos' : 'neg';
     }
     this.updateUnrealizedPnL(this.lastMidPrice);
   }
@@ -1292,7 +1307,7 @@ class ControlsUI {
     if (this.portPosVal) this.portPosVal.innerText = `${posVal < 0 ? '-' : ''}${fmtMoney(posVal)}`;
     if (this.portUnrealized) {
       this.portUnrealized.innerText = fmtSigned(unrealized);
-      this.portUnrealized.className = `font-bold ${round2(unrealized) >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+      this.portUnrealized.className = round2(unrealized) >= 0 ? 'pos' : 'neg';
     }
   }
 }
@@ -1332,7 +1347,7 @@ class GameOverUI {
 
     const rank = standings.findIndex((s) => s.id === me) + 1;
     const isMulti = standings.length > 1;
-    const tone = (v) => (round2(v) >= 0 ? 'text-emerald-400' : 'text-red-400');
+    const tone = (v) => (round2(v) >= 0 ? 'pos' : 'neg');
 
     if (this.title) {
       this.title.innerText = !isMulti || rank === 0
@@ -1344,16 +1359,16 @@ class GameOverUI {
     }
     if (this.pnl) {
       this.pnl.innerText = fmtSigned(mine.total);
-      this.pnl.className = `text-4xl font-extrabold font-mono-num ${tone(mine.total)}`;
+      this.pnl.className = `go-pnl num ${tone(mine.total)}`;
     }
     if (this.ret) this.ret.innerText = `${fmtPct((mine.total / STARTING_CASH) * 100)} on ${fmtMoney(STARTING_CASH)} starting cash`;
     if (this.realized) {
       this.realized.innerText = fmtSigned(mine.realized);
-      this.realized.className = `font-bold ${tone(mine.realized)}`;
+      this.realized.className = `num font-semibold ${tone(mine.realized)}`;
     }
     if (this.unrealized) {
       this.unrealized.innerText = fmtSigned(mine.unrealized);
-      this.unrealized.className = `font-bold ${tone(mine.unrealized)}`;
+      this.unrealized.className = `num font-semibold ${tone(mine.unrealized)}`;
     }
     if (this.note) {
       const open = mine.shares || 0;
@@ -1367,14 +1382,14 @@ class GameOverUI {
       this.rankList.innerHTML = standings.map((s, i) => {
         const isMe = s.id === me;
         return `
-          <div class="flex items-center justify-between bg-slate-950 border ${isMe ? 'border-blue-600/60' : 'border-slate-800/80'} rounded px-3 py-2 text-xs font-mono">
+          <div class="row-card row-card-roomy${isMe ? ' is-me' : ''} flex items-center justify-between text-xs num">
             <span class="flex items-center gap-3 min-w-0">
-              <span class="w-5 ${i === 0 ? 'text-amber-400 font-bold' : 'text-slate-500'}">${i + 1}</span>
-              <span class="text-white truncate">${escapeHtml(s.id)}${isMe ? ' <span class="text-slate-500">(You)</span>' : ''}</span>
+              <span class="w-5 ${i === 0 ? 't-gold font-bold' : 't-faint'}">${i + 1}</span>
+              <span class="t-ink font-medium truncate">${escapeHtml(s.id)}${isMe ? ' <span class="t-faint font-normal">(You)</span>' : ''}</span>
             </span>
             <span class="flex items-center gap-3 shrink-0">
-              <span class="font-bold ${tone(s.total)}">${fmtSigned(s.total)}</span>
-              <span class="w-16 text-right text-slate-500">${fmtPct((s.total / STARTING_CASH) * 100)}</span>
+              <span class="font-semibold ${tone(s.total)}">${fmtSigned(s.total)}</span>
+              <span class="w-16 text-right t-faint">${fmtPct((s.total / STARTING_CASH) * 100)}</span>
             </span>
           </div>`;
       }).join('');
@@ -1382,6 +1397,164 @@ class GameOverUI {
 
     this.root.classList.remove('hidden');
     if (this.backBtn) this.backBtn.focus();
+  }
+}
+
+// ===================================================================
+// LOBBY BACKGROUND: a live Monte Carlo simulation. A fan of simulated
+// price paths draws across the start screen; the path that finishes
+// highest (the frontier) is drawn in gold. Then it fades and reruns.
+// ===================================================================
+class PathsBackground {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas ? canvas.getContext('2d') : null;
+    this.raf = null;
+    this.running = false;
+    this.reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this.onResize = () => {
+      this.resize();
+      if (!this.running) this.drawFrame();
+    };
+  }
+
+  start() {
+    if (!this.ctx || this.running) return;
+    window.addEventListener('resize', this.onResize);
+    this.resize();
+    this.newRun();
+    if (this.reduceMotion) {
+      this.progress = 1; // one still frame, no animation
+      this.drawFrame();
+      return;
+    }
+    this.running = true;
+    this.last = performance.now();
+    const loop = (now) => {
+      if (!this.running) return;
+      this.advance(now);
+      this.drawFrame();
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
+  }
+
+  stop() {
+    this.running = false;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    window.removeEventListener('resize', this.onResize);
+  }
+
+  resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.w = this.canvas.clientWidth;
+    this.h = this.canvas.clientHeight;
+    this.canvas.width = Math.round(this.w * dpr);
+    this.canvas.height = Math.round(this.h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  newRun() {
+    const gauss = () => {
+      let u = 0;
+      let v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    };
+    this.steps = 240;
+    this.paths = [];
+    for (let p = 0; p < 30; p++) {
+      const ys = new Float32Array(this.steps + 1);
+      let y = 0;
+      let vol = 1;
+      for (let i = 1; i <= this.steps; i++) {
+        vol = 0.93 * vol + 0.07 * (0.55 + Math.random() * 1.0); // gentle volatility clustering
+        y += 0.0019 + vol * gauss() * 0.011;                     // slight upward drift
+        ys[i] = y;
+      }
+      this.paths.push(ys);
+    }
+    this.leader = 0;
+    this.paths.forEach((ys, i) => {
+      if (ys[this.steps] > this.paths[this.leader][this.steps]) this.leader = i;
+    });
+    this.progress = 0;
+    this.phase = 'draw';
+    this.alpha = 1;
+  }
+
+  advance(now) {
+    const dt = Math.min(0.05, (now - this.last) / 1000);
+    this.last = now;
+    if (this.phase === 'draw') {
+      this.progress = Math.min(1, this.progress + dt / 7.5);
+      if (this.progress >= 1) {
+        this.phase = 'hold';
+        this.holdUntil = now + 2800;
+      }
+    } else if (this.phase === 'hold') {
+      if (now >= this.holdUntil) this.phase = 'fade';
+    } else {
+      this.alpha -= dt / 1.4;
+      if (this.alpha <= 0) this.newRun();
+    }
+  }
+
+  drawFrame() {
+    const { ctx, w, h } = this;
+    if (!ctx || !w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+
+    const a = Math.max(0, this.alpha);
+    const x0 = w * 0.035;
+    const x1 = w * 1.02;
+    const y0 = h * 0.8;   // fan starts low-left, beneath the statement, and rises toward the card
+    const scale = h * 0.5;
+    const upto = Math.max(1, Math.floor(this.progress * this.steps));
+    const X = (i) => x0 + ((x1 - x0) * i) / this.steps;
+    const Y = (v) => y0 - v * scale;
+
+    const trace = (ys) => {
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(0));
+      for (let i = 1; i <= upto; i++) ctx.lineTo(X(i), Y(ys[i]));
+      ctx.stroke();
+    };
+
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(11, 29, 71, ${0.15 * a})`;
+    this.paths.forEach((ys, i) => {
+      if (i !== this.leader) trace(ys);
+    });
+
+    ctx.fillStyle = `rgba(11, 29, 71, ${0.3 * a})`;
+    this.paths.forEach((ys, i) => {
+      if (i === this.leader) return;
+      ctx.beginPath();
+      ctx.arc(X(upto), Y(ys[upto]), 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const lead = this.paths[this.leader];
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(176, 141, 60, ${0.95 * a})`;
+    trace(lead);
+    ctx.fillStyle = `rgba(176, 141, 60, ${0.18 * a})`;
+    ctx.beginPath();
+    ctx.arc(X(upto), Y(lead[upto]), 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(176, 141, 60, ${a})`;
+    ctx.beginPath();
+    ctx.arc(X(upto), Y(lead[upto]), 3.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Common starting point: "today"
+    ctx.fillStyle = `rgba(11, 29, 71, ${0.55 * a})`;
+    ctx.beginPath();
+    ctx.arc(X(0), Y(0), 2.6, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
@@ -1565,6 +1738,9 @@ function initApp() {
     onFinish: () => closeMarket()
   });
 
+  const lobbyPaths = new PathsBackground(document.getElementById('lobby-canvas'));
+  lobbyPaths.start();
+
   new BookUI(eventBus);
   new ChartUI(eventBus, getCurrentUserId);
   new ControlsUI(eventBus, accountManager, getCurrentUserId, toast);
@@ -1605,14 +1781,12 @@ function initApp() {
     if (!playerList) return;
     if (playerCount) playerCount.innerText = `${connectedPlayers.length} ${connectedPlayers.length === 1 ? 'Player' : 'Players'}`;
     playerList.innerHTML = connectedPlayers.map((p) => `
-      <div class="flex items-center justify-between bg-slate-950 border border-slate-800/80 rounded px-3 py-2 text-xs">
-        <span class="font-mono text-white flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-          ${escapeHtml(p.id)}${p.id === currentUserId ? ' <span class="text-slate-500">(You)</span>' : ''}
+      <div class="row-card row-card-roomy flex items-center justify-between text-xs">
+        <span class="t-ink font-medium flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full inline-block" style="background: var(--bid)"></span>
+          ${escapeHtml(p.id)}${p.id === currentUserId ? ' <span class="t-faint font-normal">(You)</span>' : ''}
         </span>
-        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${p.isHost ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-slate-800 text-slate-400'}">
-          ${p.isHost ? 'HOST' : 'CLIENT'}
-        </span>
+        <span class="chip ${p.isHost ? 'chip-gold' : 'chip-neutral'}">${p.isHost ? 'Host' : 'Trader'}</span>
       </div>
     `).join('');
   }
@@ -1626,6 +1800,7 @@ function initApp() {
   }
 
   function launchTradingScreen() {
+    lobbyPaths.stop();
     if (lobbyScreen) lobbyScreen.classList.add('hidden');
     if (tradingScreen) tradingScreen.classList.remove('hidden');
   }
@@ -1662,8 +1837,8 @@ function initApp() {
       simTimeStr: formatSimTime(gameLoop.simulatedSeconds),
       progress: gameLoop.progress(),
       points,
-      bids: orderBook.bids.slice(0, BOOK_DEPTH).map((o) => ({ price: o.price, qty: o.qty })),
-      asks: orderBook.asks.slice(0, BOOK_DEPTH).map((o) => ({ price: o.price, qty: o.qty })),
+      bids: aggregateLevels(orderBook.bids, BOOK_LEVELS),
+      asks: aggregateLevels(orderBook.asks, BOOK_LEVELS),
       playerOrders: collectHumanOrders(),
       brackets: brackets.byPlayer()
     };
