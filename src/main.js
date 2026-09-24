@@ -9,7 +9,7 @@ const SIM_SECS_PER_TICK = 15;
 const GAME_DURATION_MINUTES = 10;             // real-world length of the whole trading day
 const TOTAL_TICKS = (SESSION_CLOSE_SECS - SESSION_OPEN_SECS) / SIM_SECS_PER_TICK; // 2040
 const STARTING_CASH = 10000;
-const BOOK_DEPTH = 10;              // resting orders per side sent to the UI and to clients
+const BOOK_DEPTH = 16;              // resting orders per side sent to the UI and to clients (UI shows what fits)
 const MAX_BACKLOG_TICKS = 40;       // a stall longer than this pauses the day instead of fast-forwarding it
 const NOISE_ORDER_TTL_TICKS = 40;   // noise-bot limit orders expire after 10 sim-minutes (keeps the book small)
 
@@ -723,11 +723,23 @@ class BookUI {
       </div>`;
 
     if (this.asksContainer) {
-      this.asksContainer.innerHTML = asks.slice(0, 7).reverse().map((a) => row(a, 'red')).join('');
+      const n = this.rowsThatFit(this.asksContainer);
+      this.asksContainer.innerHTML = asks.slice(0, n).reverse().map((a) => row(a, 'red')).join('');
     }
     if (this.bidsContainer) {
-      this.bidsContainer.innerHTML = bids.slice(0, 7).map((b) => row(b, 'emerald')).join('');
+      const n = this.rowsThatFit(this.bidsContainer);
+      this.bidsContainer.innerHTML = bids.slice(0, n).map((b) => row(b, 'emerald')).join('');
     }
+  }
+
+  // Show as many levels as the column has room for, so a taller book
+  // (short-window layout) fills up instead of leaving empty space.
+  rowsThatFit(container) {
+    const probe = container.firstElementChild;
+    const probeHeight = probe ? probe.getBoundingClientRect().height : 0;
+    if (probeHeight > 0) this.rowPx = probeHeight + 2; // + space-y-0.5 gap
+    if (!this.rowPx || container.clientHeight === 0) return 7;
+    return Math.max(1, Math.floor((container.clientHeight + 2) / this.rowPx));
   }
 }
 
