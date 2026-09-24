@@ -5,7 +5,7 @@ Features.
 ~~1. Limit Orderbook visual~~ \
 ~~2. Multiplayer setup~~ \
 ~~3. Basic Bot behaviours~~ \
-4. Externalised setup to update pieces separately \
+~~4. Externalised setup to update pieces separately~~ \
 ~~5. Improved multiplayer setups, so each participant adjusts the load~~ \
 ~~6. Chart visuals, 1 minute, 5 minute, 1 hour, all day~~ \
 ~~7. Corrected short selling, buying, inventory and limit orders stuff~~ \
@@ -13,8 +13,8 @@ Features.
 ~~9. Order types(limit, market, SL/TP),account, sizes, value, overview over current orders with a delete button as well.~~ \
 ~~10. UI Adjustments and Design setup.~~ \
 ~~11. Improved bot behaviours, Correct bot behaviours again, setup random periods of participation and another 3 bot behaviours.~~ \
-12. Lobby UI, leaderboard, beginning of setup for multiple games. \
-13. Features, indicators, basic signals \
+12. ~~Lobby UI~~, leaderboard, beginning of setup for multiple games. \
+~~13. Features, indicators, basic signals~~ \
 14. RL bot \
 15. Python, pinescript, R, TMRWUSERLANGUAGE \
 16. Different game modes \
