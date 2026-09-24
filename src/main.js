@@ -740,7 +740,7 @@ class GameLoop {
 }
 
 // ===================================================================
-// 7. APPLICATION INITIALIZATION & P2P ROUTING
+// 7. APPLICATION INITIALIZATION & MULTIPLAYER LOBBY ROUTING
 // ===================================================================
 function initApp() {
   const eventBus = new EventBus();
@@ -754,9 +754,63 @@ function initApp() {
   const controlsUI = new ControlsUI(eventBus, accountManager);
 
   let currentUserId = 'Trader_1';
-  let isMultiplayerHost = false;
+  let connectedPlayers = [];
 
-  // Handle Order Submissions (Host processes locally / Client routes to Host)
+  // DOM Elements
+  const lobbyScreen = document.getElementById('lobby-screen');
+  const lobbyMenu = document.getElementById('lobby-menu');
+  const waitingRoom = document.getElementById('waiting-room');
+  const tradingScreen = document.getElementById('trading-screen');
+  
+  const btnSinglePlayer = document.getElementById('btn-single-player');
+  const btnHostMultiplayer = document.getElementById('btn-host-multiplayer');
+  const btnJoinMultiplayer = document.getElementById('btn-join-multiplayer');
+  const btnStartGame = document.getElementById('btn-start-game');
+  
+  const roomCodeInput = document.getElementById('room-code-input');
+  const displayRoomCode = document.getElementById('display-room-code');
+  const playerList = document.getElementById('player-list');
+  const playerCount = document.getElementById('player-count');
+  const hostControls = document.getElementById('host-controls');
+  const clientStatus = document.getElementById('client-status');
+  const roomBadge = document.getElementById('room-badge');
+  const roomCodeDisplay = document.getElementById('room-code-display');
+
+  function getTraderName() {
+    const input = document.getElementById('trader-name-input');
+    return (input && input.value.trim()) ? input.value.trim() : 'Trader_1';
+  }
+
+  function renderPlayerList() {
+    if (!playerList) return;
+    if (playerCount) playerCount.innerText = `${connectedPlayers.length} ${connectedPlayers.length === 1 ? 'Player' : 'Players'}`;
+
+    playerList.innerHTML = connectedPlayers.map((p) => `
+      <div class="flex items-center justify-between bg-slate-950 border border-slate-800/80 rounded px-3 py-2 text-xs">
+        <span class="font-mono text-white flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+          ${p.handle}
+        </span>
+        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${p.isHost ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-slate-800 text-slate-400'}">
+          ${p.isHost ? 'HOST' : 'CLIENT'}
+        </span>
+      </div>
+    `).join('');
+  }
+
+  function launchTradingScreen() {
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    if (tradingScreen) tradingScreen.classList.remove('hidden');
+  }
+
+  function seedInitialLiquidity() {
+    orderBook.processOrder({ playerId: 'mm_0', side: 'BUY', price: 99.80, qty: 50, type: 'LIMIT' });
+    orderBook.processOrder({ playerId: 'mm_0', side: 'BUY', price: 99.50, qty: 100, type: 'LIMIT' });
+    orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.20, qty: 50, type: 'LIMIT' });
+    orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
+  }
+
+  // Handle Order Routing
   eventBus.on('USER_SUBMIT_ORDER', (order) => {
     const fullOrder = {
       playerId: currentUserId,
@@ -773,7 +827,7 @@ function initApp() {
     }
   });
 
-  // Host broadcasts ticks and trade events to connected clients
+  // Host Broadcasters
   eventBus.on('TICK', (data) => {
     if (peerNetwork.isHost) {
       peerNetwork.broadcast({ type: 'SYNC_TICK', payload: data });
@@ -786,14 +840,33 @@ function initApp() {
     }
   });
 
+  // Client Connected Event (Client -> Host Join Message)
+  eventBus.on('NET_HOST_CONNECTED', () => {
+    peerNetwork.broadcast({ type: 'JOIN_LOBBY', handle: currentUserId });
+  });
+
   // Receive P2P Network Data
-  eventBus.on('NET_DATA_RECEIVED', ({ data }) => {
+  eventBus.on('NET_DATA_RECEIVED', ({ conn, data }) => {
     if (!data) return;
 
-    if (peerNetwork.isHost && data.type === 'SUBMIT_ORDER') {
-      orderBook.processOrder(data.order);
-    } else if (!peerNetwork.isHost) {
-      if (data.type === 'SYNC_TICK') {
+    if (peerNetwork.isHost) {
+      if (data.type === 'JOIN_LOBBY') {
+        const clientHandle = data.handle || 'Client_Trader';
+        if (!connectedPlayers.some(p => p.handle === clientHandle)) {
+          connectedPlayers.push({ handle: clientHandle, isHost: false });
+        }
+        renderPlayerList();
+        peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers });
+      } else if (data.type === 'SUBMIT_ORDER') {
+        orderBook.processOrder(data.order);
+      }
+    } else {
+      if (data.type === 'LOBBY_UPDATE') {
+        connectedPlayers = data.players;
+        renderPlayerList();
+      } else if (data.type === 'START_GAME') {
+        launchTradingScreen();
+      } else if (data.type === 'SYNC_TICK') {
         eventBus.emit('TICK', data.payload);
       } else if (data.type === 'SYNC_TRADE') {
         eventBus.emit('TRADE', data.payload);
@@ -801,40 +874,7 @@ function initApp() {
     }
   });
 
-  function seedInitialLiquidity() {
-    orderBook.processOrder({ playerId: 'mm_0', side: 'BUY', price: 99.80, qty: 50, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'mm_0', side: 'BUY', price: 99.50, qty: 100, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.20, qty: 50, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
-  }
-
-  const lobbyScreen = document.getElementById('lobby-screen');
-  const tradingScreen = document.getElementById('trading-screen');
-  const btnSinglePlayer = document.getElementById('btn-single-player');
-  const btnHostMultiplayer = document.getElementById('btn-host-multiplayer');
-  const btnJoinMultiplayer = document.getElementById('btn-join-multiplayer');
-  const roomCodeInput = document.getElementById('room-code-input');
-  const roomBadge = document.getElementById('room-badge');
-  const roomCodeDisplay = document.getElementById('room-code-display');
-
-  function getTraderName() {
-    const input = document.getElementById('trader-name-input');
-    return (input && input.value.trim()) ? input.value.trim() : 'Trader_1';
-  }
-
-  function startUI() {
-    if (lobbyScreen) lobbyScreen.classList.add('hidden');
-    if (tradingScreen) tradingScreen.classList.remove('hidden');
-  }
-
-  function updateRoomBadge(code) {
-    if (roomBadge && roomCodeDisplay) {
-      roomCodeDisplay.innerText = code;
-      roomBadge.classList.remove('hidden');
-    }
-  }
-
-  // Single Player Mode
+  // 1. Single Player Mode Button
   if (btnSinglePlayer) {
     btnSinglePlayer.addEventListener('click', () => {
       currentUserId = getTraderName();
@@ -842,11 +882,11 @@ function initApp() {
       seedInitialLiquidity();
       accountManager.broadcastState();
       gameLoop.start();
-      startUI();
+      launchTradingScreen();
     });
   }
 
-  // Host Multiplayer Mode
+  // 2. Host Multiplayer Mode Button
   if (btnHostMultiplayer) {
     btnHostMultiplayer.addEventListener('click', () => {
       currentUserId = getTraderName();
@@ -855,20 +895,26 @@ function initApp() {
       const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
       peerNetwork.initHost(roomCode);
 
-      updateRoomBadge(roomCode);
-      seedInitialLiquidity();
-      accountManager.broadcastState();
-      gameLoop.start();
-      startUI();
+      if (displayRoomCode) displayRoomCode.innerText = roomCode;
+      if (roomCodeDisplay) roomCodeDisplay.innerText = roomCode;
+      if (roomBadge) roomBadge.classList.remove('hidden');
+
+      connectedPlayers = [{ handle: `${currentUserId} (You)`, isHost: true }];
+      renderPlayerList();
+
+      if (lobbyMenu) lobbyMenu.classList.add('hidden');
+      if (waitingRoom) waitingRoom.classList.remove('hidden');
+      if (hostControls) hostControls.classList.remove('hidden');
+      if (clientStatus) clientStatus.classList.add('hidden');
     });
   }
 
-  // Join Multiplayer Mode
+  // 3. Join Multiplayer Mode Button
   if (btnJoinMultiplayer) {
     btnJoinMultiplayer.addEventListener('click', () => {
       const code = roomCodeInput ? roomCodeInput.value.trim() : '';
       if (!code) {
-        alert('Please enter a valid Room Code.');
+        alert('Please enter a valid 6-digit Room Code.');
         return;
       }
 
@@ -876,9 +922,29 @@ function initApp() {
       accountManager.setPlayerId(currentUserId);
 
       peerNetwork.initClient(code, currentUserId);
-      updateRoomBadge(code);
+
+      if (displayRoomCode) displayRoomCode.innerText = code;
+      if (roomCodeDisplay) roomCodeDisplay.innerText = code;
+      if (roomBadge) roomBadge.classList.remove('hidden');
+
+      connectedPlayers = [{ handle: `${currentUserId} (You)`, isHost: false }];
+      renderPlayerList();
+
+      if (lobbyMenu) lobbyMenu.classList.add('hidden');
+      if (waitingRoom) waitingRoom.classList.remove('hidden');
+      if (hostControls) hostControls.classList.add('hidden');
+      if (clientStatus) clientStatus.classList.remove('hidden');
+    });
+  }
+
+  // 4. Host Launches Game Button
+  if (btnStartGame) {
+    btnStartGame.addEventListener('click', () => {
+      peerNetwork.broadcast({ type: 'START_GAME' });
+      seedInitialLiquidity();
       accountManager.broadcastState();
-      startUI();
+      gameLoop.start();
+      launchTradingScreen();
     });
   }
 }
