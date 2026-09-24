@@ -54,7 +54,9 @@
 
 <!-- LOBBY & START SCREEN -->
 <div id="lobby-screen" class="flex-1 flex flex-col items-center justify-center p-4 relative overflow-y-auto">
-  <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
+  
+  <!-- Step 1: Main Menu -->
+  <div id="lobby-menu" class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
     <div class="text-center">
       <h1 class="text-3xl font-extrabold tracking-tight text-white">TOMORROW <span class="text-blue-500">MARKETS</span></h1>
       <p class="text-xs text-slate-400 mt-1">Peer-to-Peer Order Book Trading Engine</p>
@@ -87,6 +89,43 @@
       </div>
     </div>
   </div>
+
+  <!-- Step 2: Waiting Room Lobby -->
+  <div id="waiting-room" class="hidden max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
+    <div class="text-center">
+      <span class="text-xs font-bold uppercase tracking-widest text-blue-400">MULTIPLAYER LOBBY</span>
+      <h2 class="text-2xl font-bold text-white mt-1">Waiting for Players</h2>
+    </div>
+
+    <!-- Room Code Box -->
+    <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 text-center">
+      <span class="text-xs text-slate-500 font-mono block mb-1">SHARE ROOM CODE</span>
+      <div id="display-room-code" class="text-3xl font-extrabold font-mono tracking-wider text-emerald-400">------</div>
+    </div>
+
+    <!-- Connected Players List -->
+    <div>
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-xs font-semibold uppercase text-slate-400">Connected Traders</span>
+        <span id="player-count" class="text-xs font-mono text-slate-500">1 Player</span>
+      </div>
+      <div id="player-list" class="space-y-1.5 max-h-40 overflow-y-auto">
+        <!-- Player items rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Host Actions / Client Status -->
+    <div id="host-controls" class="pt-2">
+      <button id="btn-start-game" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg text-sm transition-colors shadow-lg cursor-pointer">
+        Start Game
+      </button>
+    </div>
+
+    <div id="client-status" class="hidden text-center text-xs text-slate-400 font-mono pt-2 animate-pulse">
+      Waiting for host to launch market...
+    </div>
+  </div>
+
 </div>
 
   <!-- TRADING DASHBOARD -->
