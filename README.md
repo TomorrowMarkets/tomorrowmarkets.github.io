@@ -11,5 +11,5 @@ Features.
 ~~7. Corrected short selling, buying, inventory and limit orders stuff~~ \
 ~~8. Correct the multiplayer setups.~~ \
 ~~9. Order types(limit, market, SL/TP),account, sizes, value, overview over current orders with a delete button as well.~~ \
-10. UI Adjustments and Design setup.
+10. UI Adjustments and Design setup. \
 11. Improved bot behaviours, Correct bot behaviours again, setup random periods of participation and another 3 bot behaviours. \
