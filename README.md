@@ -10,6 +10,6 @@ Features.
 ~~6. Chart visuals, 1 minute, 5 minute, 1 hour, all day~~ \
 ~~7. Corrected short selling, buying, inventory and limit orders stuff~~ \
 ~~8. Correct the multiplayer setups.~~ \
-9. Order types(limit, market, SL/TP), account, sizes, value, overview over current orders with a delete button as well. \
+9. ~~Order types(limit, market~~, SL/TP), ~~account, sizes, value~~, ~~overview over current orders with a delete button as well.~~ \
 10. Whatever
 
