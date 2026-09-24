@@ -3,8 +3,8 @@
 // (Supabase > Project Settings > API). The publishable/anon key is designed
 // to be public; the database functions do the validation.
 
-const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
-const SUPABASE_KEY = 'YOUR-PUBLISHABLE-OR-ANON-KEY';
+const SUPABASE_URL = 'https://jpsdqawilipmsineoufz.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ';
 
 export const CATEGORIES = ['discretionary', 'algorithmic'];
 export const BOARD_SIZE = 1000;
