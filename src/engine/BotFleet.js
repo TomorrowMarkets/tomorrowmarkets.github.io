@@ -11,23 +11,24 @@
 import { BOT_TYPES, TUNING, rand, randInt } from './bots.js';
 
 // ---- Tuning ----------------------------------------------------------------
-// Base population (1,000 agents). Churn joiners are drawn with these weights.
+// Base population (1,000 agents): 90% noise, 10% spread over the other 14 types.
+// Hourly joiners are drawn with the same weights, so the mix stays 90/10.
 export const BASE_MIX = {
-  noise: 520,
-  marketMaker: 30,
-  whale: 5,
-  buyer: 10,
-  seller: 10,
-  limitLadder: 10,
-  std: 40,
-  trend1: 40,
-  trend2: 40,
-  trend3: 60,
-  mr1: 40,
-  mr2: 40,
-  mr3: 60,
-  jump: 40,
-  volatility: 55
+  noise: 900,        // 90% noise traders
+  marketMaker: 30,   // the other 10%: market makers get the biggest share,
+  whale: 3,          // since the whole book depends on them
+  buyer: 3,
+  seller: 3,
+  limitLadder: 5,
+  std: 6,
+  trend1: 6,
+  trend2: 6,
+  trend3: 6,
+  mr1: 6,
+  mr2: 6,
+  mr3: 6,
+  jump: 6,
+  volatility: 8
 };
 const MIN_MARKET_MAKERS = 12;   // hourly churn never removes makers below this
 const OPENING_CROWD = { whale: 3, noise: 97 };
@@ -72,6 +73,7 @@ export class MarketState {
     this.length = history.length;
     this.mid = book.getMidPrice();
     this.volRank = null; // 0..1, set by the fleet once there is enough history
+    this.value = this.mid; // hidden fair value, set by the fleet
     this.cache = new Map();
   }
 
@@ -199,6 +201,8 @@ export class BotFleet {
     this.openingCrowd = [];
     this.lastUsOpen = null; // { direction, strength, big } for debugging / tests
     this.volSeries = [];    // recent-volatility readings, for percentile ranks
+    this.value = null;      // hidden fair value: a random walk ("news") market makers lean on
+    this.eventBias = null;  // the US open is news too: it pushes fair value while it lasts
 
     // Route fills to the bots involved so they know their positions
     eventBus.on('TRADE', (t) => {
@@ -270,6 +274,7 @@ export class BotFleet {
     // Opening book: market makers quote and some noise traders rest orders
     // before the first trade, so the day doesn't open on an empty book.
     const m = new MarketState(this.book, history, 0);
+    this.value = m.mid;
     for (const bot of this.active.values()) {
       if (bot.type === 'marketMaker') bot.onTick(m);
     }
@@ -288,6 +293,14 @@ export class BotFleet {
     while (this.events.length && this.events[0].at <= simSeconds) this.events.shift().run();
 
     const m = new MarketState(this.book, history, tick);
+    // Fair value takes a random step (news) and drifts a little toward where
+    // the market actually trades, so big trades leave a lasting mark.
+    if (this.value == null) this.value = m.mid;
+    const z = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+    const eventDrift = this.eventBias ? this.eventBias() * TUNING.valueEventDrift : 0;
+    this.value *= Math.exp(TUNING.valueVol * z + eventDrift);
+    this.value += TUNING.valuePull * (m.mid - this.value);
+    m.value = this.value;
     // Where does current volatility rank against the last ~hour of readings?
     if (history.length > 21) {
       const v = m.retStd(20);
@@ -361,6 +374,7 @@ export class BotFleet {
     const fade = this.ticksFor(US_OPEN_FADE_MINUTES);
     const biasFn = () => direction * strength * Math.exp(-(this.tick - start) / fade);
     this.lastUsOpen = { direction, strength, big, startTick: start };
+    this.eventBias = biasFn;
 
     const opts = { cohort: 'us', biasFn };
     this.spawn('whale', opts);
