@@ -1,6 +1,10 @@
 import { PeerNetwork } from './net/PeerNetwork.js';
 import { OrderBook } from './engine/OrderBook.js';
 import { BotFleet } from './engine/BotFleet.js';
+import { TickAccumulator } from './engine/bars.js';
+import { PriceChart } from './ui/PriceChart.js';
+import { mountLobbyFacts } from './ui/lobby-facts.js';
+import { createRunTracker, isConfigured as leaderboardLive } from './services/leaderboard-api.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -491,162 +495,7 @@ class BookUI {
   }
 }
 
-class ChartUI {
-  constructor(eventBus, getCurrentUserId) {
-    this.eventBus = eventBus;
-    this.getCurrentUserId = getCurrentUserId;
-    this.canvas = document.getElementById('priceChartCanvas');
-    this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
-    this.clockDisplay = document.getElementById('sim-clock');
-
-    this.timeframeSteps = { '1M': 4, '5M': 20, '10M': 40, '1H': 240, ALL: null };
-    this.activeTimeframe = '5M';
-    this.history = [];
-    this.levels = [];
-
-    this.initListeners();
-  }
-
-  initListeners() {
-    const buttons = document.querySelectorAll('.tf-btn');
-    buttons.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const tf = e.target.getAttribute('data-tf');
-        if (tf && tf in this.timeframeSteps) {
-          this.activeTimeframe = tf;
-          buttons.forEach((b) => b.classList.toggle('is-active', b === e.target));
-          this.draw();
-        }
-      });
-    });
-
-    this.eventBus.on('TICK', (data) => {
-      if (!data || !data.priceHistory) return;
-      this.history = data.priceHistory;
-      if (data.simTimeStr && this.clockDisplay) this.clockDisplay.innerText = data.simTimeStr;
-
-      const me = this.getCurrentUserId();
-      const orders = (data.playerOrders && data.playerOrders[me]) || [];
-      const brackets = (data.brackets && data.brackets[me]) || [];
-      this.levels = [
-        ...orders.map((o) => ({ price: o.price, color: '#5A6B88', label: `${o.side} ${o.qty}` })),
-        ...brackets.flatMap((b) => [
-          b.sl != null ? { price: b.sl, color: '#C23B32', label: 'SL' } : null,
-          b.tp != null ? { price: b.tp, color: '#0F8A5F', label: 'TP' } : null
-        ].filter(Boolean))
-      ];
-      this.draw();
-    });
-
-    window.addEventListener('resize', () => this.draw());
-    document.addEventListener('visibilitychange', () => this.draw());
-  }
-
-  draw() {
-    // Hidden tabs can't see the chart anyway; skip the work and redraw on return.
-    if (document.hidden || !this.canvas || !this.ctx || this.history.length === 0) return;
-
-    // Size the backing store for the screen's pixel ratio so thin lines stay crisp.
-    const width = this.canvas.parentElement.clientWidth || 400;
-    const height = this.canvas.parentElement.clientHeight || 200;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
-      this.canvas.width = Math.round(width * dpr);
-      this.canvas.height = Math.round(height * dpr);
-    }
-    const ctx = this.ctx;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-
-    const isAll = this.activeTimeframe === 'ALL';
-    const visibleData = isAll ? this.history : this.history.slice(-this.timeframeSteps[this.activeTimeframe]);
-    if (visibleData.length < 2) return;
-
-    const prices = visibleData.map((d) => d.price);
-    let min = Math.min(...prices);
-    let max = Math.max(...prices);
-    if (min === max) {
-      min -= 0.5;
-      max += 0.5;
-    } else {
-      const pad = (max - min) * 0.1;
-      min -= pad;
-      max += pad;
-    }
-    const range = max - min;
-    const yFor = (p) => height - ((p - min) / range) * height;
-
-    ctx.strokeStyle = 'rgba(11, 29, 71, 0.07)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-      const y = Math.round((height / 4) * i) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    const maxSteps = isAll ? visibleData.length : this.timeframeSteps[this.activeTimeframe];
-    const stepWidth = width / (maxSteps - 1);
-    const startOffsetIndex = maxSteps - visibleData.length;
-    const pts = visibleData.map((item, index) => [(startOffsetIndex + index) * stepWidth, yFor(item.price)]);
-
-    // Gold, see-through fill under the price line
-    const fill = ctx.createLinearGradient(0, 0, 0, height);
-    fill.addColorStop(0, 'rgba(176, 141, 60, 0.22)');
-    fill.addColorStop(1, 'rgba(176, 141, 60, 0)');
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], height);
-    pts.forEach(([x, y]) => ctx.lineTo(x, y));
-    ctx.lineTo(pts[pts.length - 1][0], height);
-    ctx.closePath();
-    ctx.fillStyle = fill;
-    ctx.fill();
-
-    // Navy price line
-    ctx.beginPath();
-    pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-    ctx.strokeStyle = '#0B1D47';
-    ctx.lineWidth = 1.75;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-
-    // Last price marker
-    const [lx, ly] = pts[pts.length - 1];
-    ctx.fillStyle = 'rgba(176, 141, 60, 0.25)';
-    ctx.beginPath();
-    ctx.arc(lx - 4, ly, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#B08D3C';
-    ctx.beginPath();
-    ctx.arc(lx - 4, ly, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Your working orders and SL/TP levels (only those inside the visible range)
-    ctx.save();
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1;
-    ctx.font = '500 10.5px Inter, system-ui, sans-serif';
-    for (const lv of this.levels) {
-      if (lv.price < min || lv.price > max) continue;
-      const y = Math.round(yFor(lv.price)) + 0.5;
-      ctx.strokeStyle = lv.color;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-      const text = `${lv.label} $${lv.price.toFixed(2)}`;
-      ctx.fillStyle = lv.color;
-      ctx.fillText(text, width - ctx.measureText(text).width - 6, y - 4);
-    }
-    ctx.restore();
-
-    ctx.fillStyle = '#8C99B0';
-    ctx.font = '10.5px Inter, system-ui, sans-serif';
-    ctx.fillText(`$${max.toFixed(2)}`, 4, 13);
-    ctx.fillText(`$${min.toFixed(2)}`, 4, height - 5);
-  }
-}
+// The price chart lives in ./ui/PriceChart.js
 
 const MINI_TONES = { neutral: 'mini', danger: 'mini mini-danger', primary: 'mini mini-primary' };
 
@@ -1058,6 +907,24 @@ class ControlsUI {
   }
 }
 
+// This player's line in the final results (falls back to their own account
+// if the host's standings don't include them).
+function myStanding(results, me, fallbackAccount) {
+  const standings = (results && results.standings) || [];
+  const mine = standings.find((s) => s.id === me);
+  if (mine) return mine;
+  if (fallbackAccount && results) {
+    return {
+      id: me,
+      realized: fallbackAccount.realizedPnL,
+      unrealized: fallbackAccount.unrealized(results.finalPrice),
+      total: fallbackAccount.totalPnL(results.finalPrice),
+      shares: fallbackAccount.shares
+    };
+  }
+  return { id: me, total: 0, realized: 0, unrealized: 0, shares: 0 };
+}
+
 class GameOverUI {
   constructor() {
     const $ = (id) => document.getElementById(id);
@@ -1072,6 +939,7 @@ class GameOverUI {
     this.rankWrap = $('go-rankings');
     this.rankSummary = $('go-rank-summary');
     this.rankList = $('go-rank-list');
+    this.leaderboard = $('go-leaderboard');
     this.backBtn = $('btn-back-to-menu');
     if (this.backBtn) this.backBtn.addEventListener('click', () => window.location.reload());
   }
@@ -1079,17 +947,7 @@ class GameOverUI {
   show(results, me, fallbackAccount) {
     if (!this.root || !results) return;
     const standings = results.standings || [];
-    let mine = standings.find((s) => s.id === me);
-    if (!mine && fallbackAccount) {
-      mine = {
-        id: me,
-        realized: fallbackAccount.realizedPnL,
-        unrealized: fallbackAccount.unrealized(results.finalPrice),
-        total: fallbackAccount.totalPnL(results.finalPrice),
-        shares: fallbackAccount.shares
-      };
-    }
-    mine = mine || { total: 0, realized: 0, unrealized: 0, shares: 0 };
+    const mine = myStanding(results, me, fallbackAccount);
 
     const rank = standings.findIndex((s) => s.id === me) + 1;
     const isMulti = standings.length > 1;
@@ -1143,6 +1001,19 @@ class GameOverUI {
 
     this.root.classList.remove('hidden');
     if (this.backBtn) this.backBtn.focus();
+  }
+
+  // Global leaderboard result: pending -> placed / not placed. Stays hidden
+  // if the leaderboard isn't set up or couldn't be reached.
+  showLeaderboard(state, category, rank = null) {
+    const el = this.leaderboard;
+    if (!el) return;
+    const board = category === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
+    const link = `<a class="footer-link" href="leaderboard.html#${category}">See the leaderboard</a>`;
+    if (state === 'pending') el.textContent = 'Saving your score to the leaderboard…';
+    else if (state === 'placed') el.innerHTML = `You placed ${ordinal(rank)} on the ${board} leaderboard. ${link}`;
+    else if (state === 'missed') el.innerHTML = `This score didn't make the ${board} top 1,000. ${link}`;
+    el.classList.toggle('hidden', state === 'hidden');
   }
 }
 
@@ -1381,6 +1252,14 @@ class GameLoop {
     this.simulatedSeconds = SESSION_OPEN_SECS;
     this.priceHistory = [];
     this.running = false;
+
+    // Every trade between two ticks feeds that tick's high, low and volume.
+    this.tickBar = new TickAccumulator();
+    this.lastClose = null;
+    this.collecting = false;
+    eventBus.on('TRADE', (t) => {
+      if (this.collecting) this.tickBar.addTrade(t.price, t.qty);
+    });
     this.finished = false;
     this.startedAt = 0;
 
@@ -1395,6 +1274,9 @@ class GameLoop {
     this.ticksDone = 0;
     this.simulatedSeconds = SESSION_OPEN_SECS;
     this.finished = false;
+    this.tickBar.reset();
+    this.lastClose = null;
+    this.collecting = true;
     this.priceHistory = [this.makePoint()];
     this.fleet.start(this.priceHistory); // 1,000 traders arrive and build the opening book
     this.startedAt = performance.now();
@@ -1405,6 +1287,7 @@ class GameLoop {
 
   stop() {
     this.running = false;
+    this.collecting = false;
     this.clock.stop();
   }
 
@@ -1444,8 +1327,13 @@ class GameLoop {
     return point;
   }
 
+  // One bar per tick: `price` is the closing mid (the bots read it), plus
+  // open/high/low/volume/value for candles and indicators (see engine/bars.js).
   makePoint() {
-    return { price: this.orderBook.getMidPrice(), simTimeStr: formatSimTime(this.simulatedSeconds), simSecs: this.simulatedSeconds };
+    const close = this.orderBook.getMidPrice();
+    const bar = this.tickBar.take(this.lastClose ?? close, close);
+    this.lastClose = close;
+    return { ...bar, simTimeStr: formatSimTime(this.simulatedSeconds), simSecs: this.simulatedSeconds };
   }
 }
 
@@ -1469,6 +1357,9 @@ function initApp() {
   let clientHistory = [];
   let joinToken = null;
   const tokenToId = new Map();
+  let runTracker = null;    // this game's leaderboard ticket
+  let usedAlgorithm = false; // set when the strategy engine places an order: the score then counts as Algorithmic
+  let stopFacts = null;
 
   const isAuthority = () => role === 'solo' || role === 'host';
   const getCurrentUserId = () => currentUserId;
@@ -1501,7 +1392,11 @@ function initApp() {
   lobbyPaths.start();
 
   new BookUI(eventBus);
-  new ChartUI(eventBus, getCurrentUserId);
+  new PriceChart(eventBus, getCurrentUserId, {
+    originSecs: SESSION_OPEN_SECS,
+    secsPerTick: SIM_SECS_PER_TICK,
+    totalTicks: TOTAL_TICKS
+  });
   new ControlsUI(eventBus, accountManager, getCurrentUserId, toast);
   const gameOverUI = new GameOverUI();
 
@@ -1560,7 +1455,37 @@ function initApp() {
     return id;
   }
 
+  function showFacts() {
+    if (!stopFacts) stopFacts = mountLobbyFacts($('lobby-facts'));
+  }
+
+  function hideFacts() {
+    if (stopFacts) stopFacts();
+    stopFacts = null;
+  }
+
+  function startRunTracking(mode) {
+    usedAlgorithm = false;
+    runTracker = createRunTracker({ mode, durationMin: GAME_DURATION_MINUTES });
+  }
+
+  // Submit this player's final PnL to the global leaderboard (once per game).
+  function submitRun(results) {
+    const tracker = runTracker;
+    runTracker = null;
+    if (!tracker) return;
+    const category = usedAlgorithm ? 'algorithmic' : 'discretionary';
+    const mine = myStanding(results, currentUserId, accountManager);
+    if (leaderboardLive) gameOverUI.showLeaderboard('pending', category);
+    tracker.finish({ handle: currentUserId, category, pnl: mine.total }).then((res) => {
+      if (!res) gameOverUI.showLeaderboard('hidden', category);
+      else if (res.rank) gameOverUI.showLeaderboard('placed', category, res.rank);
+      else gameOverUI.showLeaderboard('missed', category);
+    });
+  }
+
   function launchTradingScreen() {
+    hideFacts();
     lobbyPaths.stop();
     if (lobbyScreen) lobbyScreen.classList.add('hidden');
     if (tradingScreen) tradingScreen.classList.remove('hidden');
@@ -1737,6 +1662,7 @@ function initApp() {
   // ---- Game start / end ---------------------------------------------------
 
   function beginMarket() {
+    startRunTracking(role === 'solo' ? 'single' : 'multi');
     marketOpen = true;
     eventBus.emit('MARKET_STATE', { open: true });
     accountManager.broadcastState();
@@ -1765,6 +1691,7 @@ function initApp() {
     marketOpen = false;
     eventBus.emit('MARKET_STATE', { open: false });
     gameOverUI.show(results, currentUserId, accountManager);
+    submitRun(results);
   }
 
   // ---- Networking -----------------------------------------------------------
@@ -1812,10 +1739,12 @@ function initApp() {
         if (data.token !== joinToken) break;
         toast(data.reason || 'Could not join that room.', 'error');
         role = 'lobby';
+        hideFacts();
         if (lobbyMenu) lobbyMenu.classList.remove('hidden');
         if (waitingRoom) waitingRoom.classList.add('hidden');
         break;
       case 'START_GAME':
+        startRunTracking('multi');
         clientHistory = [];
         marketOpen = true;
         eventBus.emit('MARKET_STATE', { open: true });
@@ -1890,6 +1819,7 @@ function initApp() {
       if (waitingRoom) waitingRoom.classList.remove('hidden');
       if (hostControls) hostControls.classList.remove('hidden');
       if (clientStatus) clientStatus.classList.add('hidden');
+      showFacts();
     });
   }
 
@@ -1919,6 +1849,7 @@ function initApp() {
       if (waitingRoom) waitingRoom.classList.remove('hidden');
       if (hostControls) hostControls.classList.add('hidden');
       if (clientStatus) clientStatus.classList.remove('hidden');
+      showFacts();
     });
   }
 
