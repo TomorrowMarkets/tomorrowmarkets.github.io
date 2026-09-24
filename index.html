@@ -45,6 +45,35 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+    /* ---- Trading screen layout ------------------------------------------
+       Tall windows: the indicator workspace runs full width along the bottom.
+       Short windows: it moves under the chart, so the order book and the
+       order entry / positions column get the full height of the window.
+       min-height: 0 lets panels shrink and scroll inside themselves instead
+       of spilling out and sliding underneath each other.                   */
+    .trading-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 7fr) minmax(0, 2fr) minmax(0, 3fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "chart book side"
+        "ind   ind  ind";
+    }
+    .area-chart { grid-area: chart; min-height: 0; }
+    .area-book  { grid-area: book;  min-height: 0; }
+    .area-side  { grid-area: side;  min-height: 0; overflow-y: auto; }
+    .area-ind   { grid-area: ind;   min-height: 0; height: 9rem; }
+    .positions-panel { min-height: 18rem; }
+
+    @media (max-height: 939px) {
+      .trading-grid {
+        grid-template-areas:
+          "chart book side"
+          "ind   book side";
+      }
+      .area-ind { height: 7.5rem; }
+    }
   </style>
 </head>
 <body class="h-screen w-screen overflow-hidden flex flex-col justify-between">
@@ -152,14 +181,12 @@
     </div>
   </header>
 
-  <!-- Main Trading Core (3-Column Layout + Bottom Panel) -->
-  <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-2 gap-2">
-    
-    <!-- Top Grid Section (Chart, Book, Orders) -->
-    <div class="grid grid-cols-12 gap-2 flex-1 min-h-[500px]">
-      
-      <!-- COLUMN 1: Price Action Chart (7 cols) -->
-      <div class="col-span-7 bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col">
+  <!-- Main Trading Core: chart / book / side column / indicator workspace.
+       Areas rearrange with window height; see .trading-grid in <style>. -->
+  <div class="trading-grid flex-1 min-h-0 p-2 gap-2">
+
+      <!-- Price Action Chart -->
+      <div class="area-chart bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col">
         <div class="flex justify-between items-center mb-2">
           <div class="flex items-center gap-2">
             <span class="text-xs font-bold text-slate-400 tracking-wider">PRICE ACTION</span>
@@ -174,13 +201,13 @@
             <button data-tf="ALL" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer">ALL</button>
           </div>
         </div>
-        <div class="flex-1 relative w-full h-full min-h-[300px]">
+        <div class="flex-1 relative w-full min-h-0">
           <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
         </div>
       </div>
 
-      <!-- COLUMN 2: Order Book Engine (2 cols) -->
-      <div class="col-span-2 bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col font-mono text-xs">
+      <!-- Order Book -->
+      <div class="area-book bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col font-mono text-xs">
         <div class="text-[11px] font-bold text-slate-400 tracking-wider mb-2 flex justify-between">
           <span>ORDER BOOK</span>
           <span>SPREAD: <span id="spread-display" class="text-white">$0.00</span></span>
@@ -200,8 +227,8 @@
         <div id="bids-container" class="flex-1 flex flex-col space-y-0.5 overflow-hidden"></div>
       </div>
 
-      <!-- COLUMN 3: Order Entry & Positions (3 cols) -->
-      <div class="col-span-3 flex flex-col gap-2">
+      <!-- Order Entry & Positions (scrolls as a last resort on very short windows) -->
+      <div class="area-side flex flex-col gap-2">
         
         <!-- Order Entry Form -->
         <div class="bg-slate-900 border border-slate-800/80 rounded-lg p-3 space-y-3 shrink-0">
@@ -213,13 +240,15 @@
           </div>
 
           <div class="space-y-2 text-xs">
-            <div>
-              <label class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Quantity</label>
-              <input type="number" id="order-qty" value="10" min="1" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
-            </div>
-            <div id="price-input-container">
-              <label class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Limit Price ($)</label>
-              <input type="number" id="order-price" value="100.00" step="0.01" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label for="order-qty" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Quantity</label>
+                <input type="number" id="order-qty" value="10" min="1" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
+              </div>
+              <div id="price-input-container">
+                <label for="order-price" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Limit Price ($)</label>
+                <input type="number" id="order-price" value="100.00" step="0.01" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
+              </div>
             </div>
             <div class="grid grid-cols-2 gap-2">
               <div>
@@ -239,36 +268,36 @@
           </div>
         </div>
 
-        <!-- POSITIONS & PnL Panel (With Open Working Orders) -->
-        <div class="bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex-1 flex flex-col justify-between font-mono text-xs min-h-[220px]">
-          <div>
-            <div class="text-[11px] font-bold text-slate-400 tracking-wider mb-2">POSITIONS & PnL</div>
-            
+        <!-- POSITIONS & PnL Panel: order lists scroll, account figures stay pinned -->
+        <div class="positions-panel bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex-1 flex flex-col font-mono text-xs">
+          <div class="text-[11px] font-bold text-slate-400 tracking-wider mb-2 shrink-0">POSITIONS & PnL</div>
+
+          <div class="flex-1 min-h-0 overflow-y-auto pr-1">
             <!-- Working Unfilled Orders Container -->
             <div class="mb-3 border-b border-slate-800/80 pb-2">
               <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-sans flex justify-between items-center">
                 <span>Working Orders</span>
                 <span id="open-orders-count" class="text-[9px] bg-slate-800 text-slate-400 px-1 rounded">0</span>
               </div>
-              <div id="open-orders-list" class="max-h-40 overflow-y-auto space-y-1 pr-1">
+              <div id="open-orders-list" class="space-y-1">
                 <div class="text-[10px] text-slate-600 italic py-1">No active open orders</div>
               </div>
             </div>
 
             <!-- Stop loss / take profit protecting filled positions -->
-            <div class="mb-3 border-b border-slate-800/80 pb-2">
+            <div class="pb-2">
               <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-sans flex justify-between items-center">
                 <span>Active SL / TP</span>
                 <span id="brackets-count" class="text-[9px] bg-slate-800 text-slate-400 px-1 rounded">0</span>
               </div>
-              <div id="brackets-list" class="max-h-40 overflow-y-auto space-y-1 pr-1">
+              <div id="brackets-list" class="space-y-1">
                 <div class="text-[10px] text-slate-600 italic py-1">No stop loss or take profit on open positions</div>
               </div>
             </div>
           </div>
 
           <!-- Account Metrics Summary -->
-          <div class="space-y-1.5 text-[11px] pt-1">
+          <div class="space-y-1.5 text-[11px] pt-2 mt-1 border-t border-slate-800/80 shrink-0">
             <div class="flex justify-between"><span class="text-slate-400">CASH BALANCE</span><span id="port-cash" class="text-white font-bold">$10,000.00</span></div>
             <div class="flex justify-between"><span class="text-slate-400">SHARES HELD</span><span id="port-shares" class="text-white font-bold">0</span></div>
             <div class="flex justify-between"><span class="text-slate-400">AVG ENTRY</span><span id="port-avg-price" class="text-slate-300">$0.00</span></div>
@@ -281,10 +310,9 @@
 
       </div>
 
-    </div>
-
-    <!-- BOTTOM FRAME: Strategy & Technical Indicators Workspace (Reserved) -->
-    <div class="h-36 bg-slate-900 border border-slate-800/80 rounded-lg p-3 shrink-0 flex flex-col">
+      <!-- Strategy & Technical Indicators Workspace (Reserved): full width on tall
+           windows, under the chart on short ones -->
+      <div id="indicator-panel" class="area-ind bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col">
       <div class="flex items-center justify-between mb-2 border-b border-slate-800/80 pb-1.5">
         <div class="flex items-center space-x-2">
           <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
