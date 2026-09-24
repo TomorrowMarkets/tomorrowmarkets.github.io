@@ -285,6 +285,7 @@
     .toast-success { border-left-color: var(--bid); }
     .toast-warn { border-left-color: var(--gold); }
     .toast-error { border-left-color: var(--ask); }
+    .toast-news { border-left-color: var(--gold); background: rgba(255, 252, 244, 0.94); }
 
     /* ---- Score screen ------------------------------------------------- */
     .go-pnl { font-family: 'Source Serif 4', Georgia, serif; font-weight: 400; font-size: 3rem; line-height: 1.05; letter-spacing: -0.02em; }
@@ -396,6 +397,7 @@
         <img src="assets/logo.svg" alt="" class="w-6 h-6 rounded-[3px]" />
         <span class="wordmark text-[18px] leading-none">Tomorrow Markets</span>
         <span class="chip chip-neutral ml-1">Spot / USD</span>
+        <span class="chip chip-neutral" title="Traders in the market right now"><span id="trader-count" class="num">0</span> traders</span>
         <span id="room-badge" class="hidden chip chip-gold">Room <span id="room-code-display" class="num">------</span></span>
       </div>
       <div class="flex items-center gap-4">
