@@ -21,3 +21,7 @@ Features.
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
 --- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
 --- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) 
+
+
+https://jpsdqawilipmsineoufz.supabase.co
+sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ
