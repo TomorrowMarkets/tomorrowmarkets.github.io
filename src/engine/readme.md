@@ -1,6 +1,8 @@
 bots.js: every trading strategy, plus TUNING (the dials for how the market behaves) \
 BotFleet.js: the trading population, the daily schedule and the market state bots read \
 OrderBook.js: the limit order book and matching \
+bars.js: price bars (one per step, resampled for the chart) \
+indicators.js: technical indicators as plain functions (chart now, strategy scripts later) \
 random.js: the engine's random numbers; seed it and the same day plays out again \
 simulate.js: runs a whole day with no UI (checks, backtests, generated data)
 
