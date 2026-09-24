@@ -19,7 +19,7 @@ class EventBus {
 }
 
 // ===================================================================
-// 2. ACCOUNT MANAGER WITH SYMMETRIC CAPITAL POOL
+// 2. ACCOUNT MANAGER
 // ===================================================================
 class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
@@ -47,7 +47,7 @@ class AccountManager {
     if (side === 'BUY') {
       if (this.shares >= 0) {
         if (this.cash < orderCost) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to buy ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to buy ${qty} shares ($${orderCost.toFixed(2)}).` };
         }
       } else {
         const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
@@ -55,13 +55,13 @@ class AccountManager {
         const flipCost = flipLongQty * execPrice;
 
         if (flipCost > 0 && this.cash < flipCost) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open net long position of ${flipLongQty} shares.` };
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open long position.` };
         }
       }
     } else if (side === 'SELL') {
       if (this.shares <= 0) {
         if (this.cash < orderCost) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares ($${orderCost.toFixed(2)}).` };
         }
       } else {
         const longQtyToClose = Math.min(qty, this.shares);
@@ -69,7 +69,7 @@ class AccountManager {
         const flipCost = flipShortQty * execPrice;
 
         if (flipCost > 0 && this.cash < flipCost) {
-          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open net short position of ${flipShortQty} shares.` };
+          return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to open short position.` };
         }
       }
     }
@@ -140,7 +140,7 @@ class AccountManager {
 }
 
 // ===================================================================
-// 3. ORDER BOOK MATCHING ENGINE
+// 3. ORDER BOOK MATCHING ENGINE (With Order ID & Cancellation)
 // ===================================================================
 class OrderBook {
   constructor(eventBus) {
@@ -164,15 +164,47 @@ class OrderBook {
     this.asks = this.asks.filter((a) => a.playerId !== playerId);
   }
 
+  cancelOrder(orderId, playerId) {
+    let cancelled = false;
+    
+    const bidIndex = this.bids.findIndex(b => b.id === orderId && b.playerId === playerId);
+    if (bidIndex !== -1) {
+      this.bids.splice(bidIndex, 1);
+      cancelled = true;
+    } else {
+      const askIndex = this.asks.findIndex(a => a.id === orderId && a.playerId === playerId);
+      if (askIndex !== -1) {
+        this.asks.splice(askIndex, 1);
+        cancelled = true;
+      }
+    }
+
+    return cancelled;
+  }
+
+  getPlayerOpenOrders(playerId) {
+    const userBids = this.bids
+      .filter(b => b.playerId === playerId)
+      .map(b => ({ ...b, side: 'BUY' }));
+    
+    const userAsks = this.asks
+      .filter(a => a.playerId === playerId)
+      .map(a => ({ ...a, side: 'SELL' }));
+
+    return [...userBids, ...userAsks];
+  }
+
   processOrder(order) {
-    const { playerId, side, price, qty, type } = order;
+    const { playerId, side, price, qty, type, id } = order;
     if (!qty || qty <= 0) return;
+
+    const orderId = id || ('ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4));
 
     if (type === 'MARKET') {
       this.executeMarketOrder(playerId, side, qty);
     } else {
       if (!price || price <= 0) return;
-      this.executeLimitOrder(playerId, side, price, qty);
+      this.executeLimitOrder(playerId, side, price, qty, orderId);
     }
   }
 
@@ -202,7 +234,7 @@ class OrderBook {
     }
   }
 
-  executeLimitOrder(playerId, side, price, qty) {
+  executeLimitOrder(playerId, side, price, qty, orderId) {
     let remainingQty = qty;
 
     if (side === 'BUY') {
@@ -228,7 +260,7 @@ class OrderBook {
       }
 
       if (remainingQty > 0) {
-        this.bids.push({ id: Math.random().toString(), playerId, price, qty: remainingQty });
+        this.bids.push({ id: orderId, playerId, price, qty: remainingQty });
         this.bids.sort((a, b) => b.price - a.price);
       }
     } else {
@@ -254,7 +286,7 @@ class OrderBook {
       }
 
       if (remainingQty > 0) {
-        this.asks.push({ id: Math.random().toString(), playerId, price, qty: remainingQty });
+        this.asks.push({ id: orderId, playerId, price, qty: remainingQty });
         this.asks.sort((a, b) => a.price - b.price);
       }
     }
@@ -556,9 +588,11 @@ class ChartUI {
 }
 
 class ControlsUI {
-  constructor(eventBus, accountManager) {
+  constructor(eventBus, accountManager, getCurrentUserId, orderBook) {
     this.eventBus = eventBus;
     this.accountManager = accountManager;
+    this.getCurrentUserId = getCurrentUserId;
+    this.orderBook = orderBook;
     this.orderType = 'LIMIT';
     this.lastMidPrice = 100.00;
 
@@ -577,6 +611,9 @@ class ControlsUI {
     this.portUnrealized = document.getElementById('port-unrealized');
     this.portRealized = document.getElementById('port-realized');
 
+    this.openOrdersList = document.getElementById('open-orders-list');
+    this.openOrdersCount = document.getElementById('open-orders-count');
+
     this.initListeners();
   }
 
@@ -586,11 +623,24 @@ class ControlsUI {
     if (this.btnBuy) this.btnBuy.addEventListener('click', () => this.submitOrder('BUY'));
     if (this.btnSell) this.btnSell.addEventListener('click', () => this.submitOrder('SELL'));
 
+    if (this.openOrdersList) {
+      this.openOrdersList.addEventListener('click', (e) => {
+        const cancelBtn = e.target.closest('.btn-cancel-order');
+        if (cancelBtn) {
+          const orderId = cancelBtn.getAttribute('data-order-id');
+          if (orderId && this.eventBus) {
+            this.eventBus.emit('USER_CANCEL_ORDER', { orderId });
+          }
+        }
+      });
+    }
+
     if (this.eventBus) {
       this.eventBus.on('ACCOUNT_UPDATE', (acc) => this.renderAccount(acc));
       this.eventBus.on('TICK', (data) => {
         this.lastMidPrice = data.midPrice;
         this.updateUnrealizedPnL(data.midPrice);
+        this.renderOpenOrders();
       });
     }
   }
@@ -628,6 +678,40 @@ class ControlsUI {
         qty
       });
     }
+  }
+
+  renderOpenOrders() {
+    if (!this.openOrdersList || !this.orderBook) return;
+
+    const playerId = this.getCurrentUserId();
+    const activeOrders = this.orderBook.getPlayerOpenOrders(playerId);
+
+    if (this.openOrdersCount) {
+      this.openOrdersCount.innerText = activeOrders.length;
+    }
+
+    if (activeOrders.length === 0) {
+      this.openOrdersList.innerHTML = `<div class="text-[10px] text-slate-600 italic py-1">No active open orders</div>`;
+      return;
+    }
+
+    this.openOrdersList.innerHTML = activeOrders.map(ord => {
+      const isBuy = ord.side === 'BUY';
+      const sideColor = isBuy ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-red-400 bg-red-500/10 border-red-500/20';
+      return `
+        <div class="flex items-center justify-between bg-slate-950 border border-slate-800/80 rounded px-2 py-1 text-[11px] font-mono">
+          <div class="flex items-center space-x-2">
+            <span class="text-[9px] font-bold px-1 py-0.2 rounded border ${sideColor}">${ord.side}</span>
+            <span class="text-white font-bold">${ord.qty}</span>
+            <span class="text-slate-400">@</span>
+            <span class="text-slate-200">$${ord.price.toFixed(2)}</span>
+          </div>
+          <button data-order-id="${ord.id}" class="btn-cancel-order text-[10px] bg-red-950/80 hover:bg-red-900 text-red-300 hover:text-white border border-red-800 px-1.5 py-0.5 rounded transition-colors cursor-pointer">
+            Delete
+          </button>
+        </div>
+      `;
+    }).join('');
   }
 
   renderAccount(acc) {
@@ -740,7 +824,7 @@ class GameLoop {
 }
 
 // ===================================================================
-// 7. APPLICATION INITIALIZATION & MULTIPLAYER LOBBY ROUTING
+// 7. APPLICATION INITIALIZATION & LOBBY ROUTING
 // ===================================================================
 function initApp() {
   const eventBus = new EventBus();
@@ -748,13 +832,15 @@ function initApp() {
   const accountManager = new AccountManager(eventBus, 'Trader_1');
   const orderBook = new OrderBook(eventBus);
 
+  let currentUserId = 'Trader_1';
+  let connectedPlayers = [];
+
+  const getCurrentUserId = () => currentUserId;
+
   const gameLoop = new GameLoop(orderBook, eventBus, 10);
   const bookUI = new BookUI(eventBus);
   const chartUI = new ChartUI(eventBus);
-  const controlsUI = new ControlsUI(eventBus, accountManager);
-
-  let currentUserId = 'Trader_1';
-  let connectedPlayers = [];
+  const controlsUI = new ControlsUI(eventBus, accountManager, getCurrentUserId, orderBook);
 
   // DOM Elements
   const lobbyScreen = document.getElementById('lobby-screen');
@@ -810,9 +896,10 @@ function initApp() {
     orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
   }
 
-  // Handle Order Routing
+  // Handle Order Placement Routing
   eventBus.on('USER_SUBMIT_ORDER', (order) => {
     const fullOrder = {
+      id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
       playerId: currentUserId,
       side: order.side,
       price: order.price,
@@ -824,6 +911,15 @@ function initApp() {
       orderBook.processOrder(fullOrder);
     } else {
       peerNetwork.broadcast({ type: 'SUBMIT_ORDER', order: fullOrder });
+    }
+  });
+
+  // Handle Order Cancellation Routing
+  eventBus.on('USER_CANCEL_ORDER', ({ orderId }) => {
+    if (peerNetwork.isHost || !peerNetwork.hostConn) {
+      orderBook.cancelOrder(orderId, currentUserId);
+    } else {
+      peerNetwork.broadcast({ type: 'CANCEL_ORDER', orderId, playerId: currentUserId });
     }
   });
 
@@ -840,13 +936,13 @@ function initApp() {
     }
   });
 
-  // Client Connected Event (Client -> Host Join Message)
+  // Client Connected Event
   eventBus.on('NET_HOST_CONNECTED', () => {
     peerNetwork.broadcast({ type: 'JOIN_LOBBY', handle: currentUserId });
   });
 
   // Receive P2P Network Data
-  eventBus.on('NET_DATA_RECEIVED', ({ conn, data }) => {
+  eventBus.on('NET_DATA_RECEIVED', ({ data }) => {
     if (!data) return;
 
     if (peerNetwork.isHost) {
@@ -859,6 +955,8 @@ function initApp() {
         peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers });
       } else if (data.type === 'SUBMIT_ORDER') {
         orderBook.processOrder(data.order);
+      } else if (data.type === 'CANCEL_ORDER') {
+        orderBook.cancelOrder(data.orderId, data.playerId);
       }
     } else {
       if (data.type === 'LOBBY_UPDATE') {
@@ -874,7 +972,7 @@ function initApp() {
     }
   });
 
-  // 1. Single Player Mode Button
+  // Single Player Mode
   if (btnSinglePlayer) {
     btnSinglePlayer.addEventListener('click', () => {
       currentUserId = getTraderName();
@@ -886,7 +984,7 @@ function initApp() {
     });
   }
 
-  // 2. Host Multiplayer Mode Button
+  // Host Multiplayer Mode
   if (btnHostMultiplayer) {
     btnHostMultiplayer.addEventListener('click', () => {
       currentUserId = getTraderName();
@@ -909,7 +1007,7 @@ function initApp() {
     });
   }
 
-  // 3. Join Multiplayer Mode Button
+  // Join Multiplayer Mode
   if (btnJoinMultiplayer) {
     btnJoinMultiplayer.addEventListener('click', () => {
       const code = roomCodeInput ? roomCodeInput.value.trim() : '';
@@ -937,7 +1035,7 @@ function initApp() {
     });
   }
 
-  // 4. Host Launches Game Button
+  // Host Launches Game
   if (btnStartGame) {
     btnStartGame.addEventListener('click', () => {
       peerNetwork.broadcast({ type: 'START_GAME' });
