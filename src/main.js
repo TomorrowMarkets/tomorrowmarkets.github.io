@@ -1,6 +1,4 @@
-/**
- * TOMORROW MARKETS - Strict Capital-Pool Short & Long Inventory Engine
- */
+import { PeerNetwork } from './net/PeerNetwork.js';
 
 // ===================================================================
 // 1. EVENT BUS
@@ -27,8 +25,8 @@ class AccountManager {
   constructor(eventBus, playerId = 'Trader_1') {
     this.eventBus = eventBus;
     this.playerId = playerId;
-    this.cash = 10000.00; // Available uncommitted capital balance
-    this.shares = 0;      // Positive = Long, Negative = Short
+    this.cash = 10000.00;
+    this.shares = 0;
     this.avgEntry = 0.00;
     this.realizedPnL = 0.00;
 
@@ -48,12 +46,10 @@ class AccountManager {
 
     if (side === 'BUY') {
       if (this.shares >= 0) {
-        // Opening / expanding long position
         if (this.cash < orderCost) {
           return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to buy ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
         }
       } else {
-        // Covering short position + potential flip to long
         const shortQtyToCover = Math.min(qty, Math.abs(this.shares));
         const flipLongQty = qty - shortQtyToCover;
         const flipCost = flipLongQty * execPrice;
@@ -64,12 +60,10 @@ class AccountManager {
       }
     } else if (side === 'SELL') {
       if (this.shares <= 0) {
-        // Opening / expanding short position
         if (this.cash < orderCost) {
           return { allowed: false, reason: `Insufficient capital ($${this.cash.toFixed(2)}) to short sell ${qty} shares (Requires $${orderCost.toFixed(2)}).` };
         }
       } else {
-        // Closing long position + potential flip to short
         const longQtyToClose = Math.min(qty, this.shares);
         const flipShortQty = qty - longQtyToClose;
         const flipCost = flipShortQty * execPrice;
@@ -98,68 +92,46 @@ class AccountManager {
     const { buyerId, sellerId, price, qty } = trade;
     let updated = false;
 
-    // BUYING SIDE
     if (buyerId === this.playerId) {
       let remainingQty = qty;
-
-      // 1. Cover short inventory first (releases reserved capital + PnL back into cash)
       if (this.shares < 0) {
         const coverQty = Math.min(remainingQty, Math.abs(this.shares));
         const pnl = (this.avgEntry - price) * coverQty;
         this.realizedPnL += pnl;
-
-        // Restore original reserved short capital plus realized PnL
         this.cash += (coverQty * this.avgEntry) + pnl;
-
-        this.shares += coverQty; // Moves inventory toward 0 (e.g. -100 + 10 = -90)
+        this.shares += coverQty;
         if (this.shares === 0) this.avgEntry = 0;
-
         remainingQty -= coverQty;
       }
-
-      // 2. Open / expand long position with remaining quantity
       if (remainingQty > 0) {
         const cost = price * remainingQty;
-        this.cash -= cost; // Deduct cash capital
-
+        this.cash -= cost;
         const totalCost = (this.shares * this.avgEntry) + cost;
         this.shares += remainingQty;
         this.avgEntry = this.shares > 0 ? totalCost / this.shares : 0;
       }
-
       updated = true;
     }
 
-    // SELLING SIDE
     if (sellerId === this.playerId) {
       let remainingQty = qty;
-
-      // 1. Close long inventory first (releases reserved capital + PnL back into cash)
       if (this.shares > 0) {
         const closeQty = Math.min(remainingQty, this.shares);
         const pnl = (price - this.avgEntry) * closeQty;
         this.realizedPnL += pnl;
-
-        // Restore original long capital plus realized PnL
         this.cash += (closeQty * this.avgEntry) + pnl;
-
-        this.shares -= closeQty; // Moves inventory toward 0
+        this.shares -= closeQty;
         if (this.shares === 0) this.avgEntry = 0;
-
         remainingQty -= closeQty;
       }
-
-      // 2. Open / expand short position with remaining quantity
       if (remainingQty > 0) {
         const shortCost = price * remainingQty;
-        this.cash -= shortCost; // Deduct available cash balance as short position expands
-
+        this.cash -= shortCost;
         const currentShortQty = Math.abs(this.shares);
         const totalShortVal = (currentShortQty * this.avgEntry) + shortCost;
-        this.shares -= remainingQty; // Inventory turns negative (e.g. 0 - 100 = -100)
+        this.shares -= remainingQty;
         this.avgEntry = Math.abs(this.shares) > 0 ? totalShortVal / Math.abs(this.shares) : 0;
       }
-
       updated = true;
     }
 
@@ -768,10 +740,11 @@ class GameLoop {
 }
 
 // ===================================================================
-// 7. APPLICATION INITIALIZATION
+// 7. APPLICATION INITIALIZATION & P2P ROUTING
 // ===================================================================
 function initApp() {
   const eventBus = new EventBus();
+  const peerNetwork = new PeerNetwork(eventBus);
   const accountManager = new AccountManager(eventBus, 'Trader_1');
   const orderBook = new OrderBook(eventBus);
 
@@ -781,15 +754,51 @@ function initApp() {
   const controlsUI = new ControlsUI(eventBus, accountManager);
 
   let currentUserId = 'Trader_1';
+  let isMultiplayerHost = false;
 
+  // Handle Order Submissions (Host processes locally / Client routes to Host)
   eventBus.on('USER_SUBMIT_ORDER', (order) => {
-    orderBook.processOrder({
+    const fullOrder = {
       playerId: currentUserId,
       side: order.side,
       price: order.price,
       qty: order.qty,
       type: order.type
-    });
+    };
+
+    if (peerNetwork.isHost || !peerNetwork.hostConn) {
+      orderBook.processOrder(fullOrder);
+    } else {
+      peerNetwork.broadcast({ type: 'SUBMIT_ORDER', order: fullOrder });
+    }
+  });
+
+  // Host broadcasts ticks and trade events to connected clients
+  eventBus.on('TICK', (data) => {
+    if (peerNetwork.isHost) {
+      peerNetwork.broadcast({ type: 'SYNC_TICK', payload: data });
+    }
+  });
+
+  eventBus.on('TRADE', (trade) => {
+    if (peerNetwork.isHost) {
+      peerNetwork.broadcast({ type: 'SYNC_TRADE', payload: trade });
+    }
+  });
+
+  // Receive P2P Network Data
+  eventBus.on('NET_DATA_RECEIVED', ({ data }) => {
+    if (!data) return;
+
+    if (peerNetwork.isHost && data.type === 'SUBMIT_ORDER') {
+      orderBook.processOrder(data.order);
+    } else if (!peerNetwork.isHost) {
+      if (data.type === 'SYNC_TICK') {
+        eventBus.emit('TICK', data.payload);
+      } else if (data.type === 'SYNC_TRADE') {
+        eventBus.emit('TRADE', data.payload);
+      }
+    }
   });
 
   function seedInitialLiquidity() {
@@ -799,27 +808,79 @@ function initApp() {
     orderBook.processOrder({ playerId: 'mm_0', side: 'SELL', price: 100.50, qty: 100, type: 'LIMIT' });
   }
 
-  seedInitialLiquidity();
-  accountManager.broadcastState();
-  gameLoop.start();
-
   const lobbyScreen = document.getElementById('lobby-screen');
   const tradingScreen = document.getElementById('trading-screen');
   const btnSinglePlayer = document.getElementById('btn-single-player');
   const btnHostMultiplayer = document.getElementById('btn-host-multiplayer');
+  const btnJoinMultiplayer = document.getElementById('btn-join-multiplayer');
+  const roomCodeInput = document.getElementById('room-code-input');
+  const roomBadge = document.getElementById('room-badge');
+  const roomCodeDisplay = document.getElementById('room-code-display');
 
-  function handleLobbyTransition() {
+  function getTraderName() {
     const input = document.getElementById('trader-name-input');
-    if (input && input.value.trim()) {
-      currentUserId = input.value.trim();
-      accountManager.setPlayerId(currentUserId);
-    }
+    return (input && input.value.trim()) ? input.value.trim() : 'Trader_1';
+  }
+
+  function startUI() {
     if (lobbyScreen) lobbyScreen.classList.add('hidden');
     if (tradingScreen) tradingScreen.classList.remove('hidden');
   }
 
-  if (btnSinglePlayer) btnSinglePlayer.addEventListener('click', handleLobbyTransition);
-  if (btnHostMultiplayer) btnHostMultiplayer.addEventListener('click', handleLobbyTransition);
+  function updateRoomBadge(code) {
+    if (roomBadge && roomCodeDisplay) {
+      roomCodeDisplay.innerText = code;
+      roomBadge.classList.remove('hidden');
+    }
+  }
+
+  // Single Player Mode
+  if (btnSinglePlayer) {
+    btnSinglePlayer.addEventListener('click', () => {
+      currentUserId = getTraderName();
+      accountManager.setPlayerId(currentUserId);
+      seedInitialLiquidity();
+      accountManager.broadcastState();
+      gameLoop.start();
+      startUI();
+    });
+  }
+
+  // Host Multiplayer Mode
+  if (btnHostMultiplayer) {
+    btnHostMultiplayer.addEventListener('click', () => {
+      currentUserId = getTraderName();
+      accountManager.setPlayerId(currentUserId);
+
+      const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
+      peerNetwork.initHost(roomCode);
+
+      updateRoomBadge(roomCode);
+      seedInitialLiquidity();
+      accountManager.broadcastState();
+      gameLoop.start();
+      startUI();
+    });
+  }
+
+  // Join Multiplayer Mode
+  if (btnJoinMultiplayer) {
+    btnJoinMultiplayer.addEventListener('click', () => {
+      const code = roomCodeInput ? roomCodeInput.value.trim() : '';
+      if (!code) {
+        alert('Please enter a valid Room Code.');
+        return;
+      }
+
+      currentUserId = getTraderName();
+      accountManager.setPlayerId(currentUserId);
+
+      peerNetwork.initClient(code, currentUserId);
+      updateRoomBadge(code);
+      accountManager.broadcastState();
+      startUI();
+    });
+  }
 }
 
 if (document.readyState === 'loading') {
