@@ -1,117 +1,191 @@
+// src/engine/OrderBook.js
+// Price-time priority limit order book. Emits a TRADE event on the event bus
+// for every fill. An id index makes cancels O(log n) so a thousand bots can
+// cancel and re-quote every tick.
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
 export class OrderBook {
   constructor(eventBus) {
     this.eventBus = eventBus;
-    this.bids = [];
-    this.asks = [];
-    this.lastPrice = 100.00;
+    this.bids = []; // best (highest) first
+    this.asks = []; // best (lowest) first
+    this.index = new Map(); // orderId -> { order, side }
+    this.lastPrice = 100.0;
+    this.currentTick = 0;
+    this.seq = 0;
+    this.nextExpiry = Infinity;
   }
 
+  nextId(prefix = 'o') {
+    this.seq += 1;
+    return `${prefix}${this.seq}`;
+  }
+
+  bestBid() { return this.bids.length ? this.bids[0].price : null; }
+  bestAsk() { return this.asks.length ? this.asks[0].price : null; }
+
+  // Mid of the best bid and ask. If one side is empty the "mid" would jump to
+  // the other side's best price, so fall back to the last trade instead.
   getMidPrice() {
-    if (this.bids.length > 0 && this.asks.length > 0) {
-      return (this.bids[0].price + this.asks[0].price) / 2;
-    }
-    if (this.bids.length > 0) return this.bids[0].price;
-    if (this.asks.length > 0) return this.asks[0].price;
-    return this.lastPrice || 100.00;
+    if (this.bids.length > 0 && this.asks.length > 0) return (this.bids[0].price + this.asks[0].price) / 2;
+    return this.lastPrice || 100.0;
   }
 
+  // Aggregated price levels, best first: [{ price, qty }]
+  levels(side, depth) {
+    const orders = side === 'BUY' ? this.bids : this.asks;
+    const out = [];
+    for (const o of orders) {
+      const last = out[out.length - 1];
+      if (last && last.price === o.price) last.qty += o.qty;
+      else if (out.length === depth) break;
+      else out.push({ price: o.price, qty: o.qty });
+    }
+    return out;
+  }
+
+  // ---- book maintenance -------------------------------------------------
+
+  insert(side, order) {
+    const book = side === 'BUY' ? this.bids : this.asks;
+    const isBetter = side === 'BUY' ? (a, b) => a > b : (a, b) => a < b;
+    let lo = 0;
+    let hi = book.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (isBetter(order.price, book[m].price)) hi = m;
+      else lo = m + 1;
+    }
+    book.splice(lo, 0, order);
+    this.index.set(order.id, { order, side });
+    if (order.expiresAt != null && order.expiresAt < this.nextExpiry) this.nextExpiry = order.expiresAt;
+  }
+
+  locate(book, side, order) {
+    let lo = 0;
+    let hi = book.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      const p = book[m].price;
+      if (side === 'BUY' ? p > order.price : p < order.price) lo = m + 1;
+      else hi = m;
+    }
+    for (let i = lo; i < book.length && book[i].price === order.price; i++) {
+      if (book[i] === order) return i;
+    }
+    return book.indexOf(order);
+  }
+
+  has(orderId) {
+    return this.index.has(orderId);
+  }
+
+  findOrder(orderId) {
+    const e = this.index.get(orderId);
+    return e ? { order: e.order, side: e.side } : null;
+  }
+
+  // Remove one resting order. If playerId is given it must own the order.
+  removeOrder(orderId, playerId = null) {
+    const e = this.index.get(orderId);
+    if (!e || (playerId != null && e.order.playerId !== playerId)) return null;
+    const book = e.side === 'BUY' ? this.bids : this.asks;
+    const i = this.locate(book, e.side, e.order);
+    if (i !== -1) book.splice(i, 1);
+    this.index.delete(orderId);
+    return { order: e.order, side: e.side };
+  }
+
+  cancelOrder(orderId, playerId = null) {
+    return this.removeOrder(orderId, playerId) !== null;
+  }
+
+  clearPlayerOrders(playerId) {
+    const keep = (o) => {
+      if (o.playerId !== playerId) return true;
+      this.index.delete(o.id);
+      return false;
+    };
+    this.bids = this.bids.filter(keep);
+    this.asks = this.asks.filter(keep);
+  }
+
+  expireOrders(tick) {
+    if (tick < this.nextExpiry) return;
+    let next = Infinity;
+    const keep = (o) => {
+      if (o.expiresAt != null && o.expiresAt <= tick) {
+        this.index.delete(o.id);
+        return false;
+      }
+      if (o.expiresAt != null && o.expiresAt < next) next = o.expiresAt;
+      return true;
+    };
+    this.bids = this.bids.filter(keep);
+    this.asks = this.asks.filter(keep);
+    this.nextExpiry = next;
+  }
+
+  getPlayerOpenOrders(playerId) {
+    return [
+      ...this.bids.filter((b) => b.playerId === playerId).map((b) => ({ ...b, side: 'BUY' })),
+      ...this.asks.filter((a) => a.playerId === playerId).map((a) => ({ ...a, side: 'SELL' }))
+    ];
+  }
+
+  // ---- matching -----------------------------------------------------------
+
+  // Returns { id, filledQty, avgPrice, restingQty } or null if the order was invalid.
   processOrder(order) {
-    const { playerId, side, price, qty, type } = order;
+    const { playerId, side } = order;
+    const qty = Math.floor(order.qty);
+    if (!(qty > 0)) return null;
+    const id = order.id || this.nextId('b');
 
-    if (type === 'MARKET') {
-      this.executeMarketOrder(playerId, side, qty);
-    } else {
-      this.executeLimitOrder(playerId, side, price, qty);
+    if (order.type === 'MARKET') {
+      const r = this.match(playerId, side, qty, null, id);
+      return { id, ...r, restingQty: 0 };
     }
+
+    const price = round2(order.price);
+    if (!(price > 0)) return null;
+    const r = this.match(playerId, side, qty, price, id);
+    const restingQty = qty - r.filledQty;
+    if (restingQty > 0) {
+      this.insert(side, { id, playerId, price, qty: restingQty, expiresAt: order.expiresAt ?? null });
+    }
+    return { id, ...r, restingQty };
   }
 
-  executeMarketOrder(playerId, side, qty) {
-    let remainingQty = qty;
-    const targetBook = side === 'BUY' ? this.asks : this.bids;
+  match(playerId, side, qty, limitPrice, orderId) {
+    const book = side === 'BUY' ? this.asks : this.bids;
+    let remaining = qty;
+    let filled = 0;
+    let notional = 0;
 
-    while (remainingQty > 0 && targetBook.length > 0) {
-      const topOrder = targetBook[0];
-      const execQty = Math.min(remainingQty, topOrder.qty);
-      const execPrice = topOrder.price;
+    while (remaining > 0 && book.length > 0) {
+      const top = book[0];
+      if (limitPrice != null && (side === 'BUY' ? top.price > limitPrice : top.price < limitPrice)) break;
 
+      const execQty = Math.min(remaining, top.qty);
+      const execPrice = top.price;
+      remaining -= execQty;
+      filled += execQty;
+      notional += execQty * execPrice;
+      top.qty -= execQty;
+      if (top.qty <= 0) {
+        book.shift();
+        this.index.delete(top.id);
+      }
       this.lastPrice = execPrice;
-      remainingQty -= execQty;
-      topOrder.qty -= execQty;
 
-      const trade = {
-        buyerId: side === 'BUY' ? playerId : topOrder.playerId,
-        sellerId: side === 'SELL' ? playerId : topOrder.playerId,
-        price: execPrice,
-        qty: execQty
-      };
-
-      if (this.eventBus) this.eventBus.emit('TRADE', trade);
-
-      if (topOrder.qty <= 0) {
-        targetBook.shift();
+      if (this.eventBus) {
+        this.eventBus.emit('TRADE', side === 'BUY'
+          ? { buyerId: playerId, sellerId: top.playerId, price: execPrice, qty: execQty, buyOrderId: orderId, sellOrderId: top.id }
+          : { buyerId: top.playerId, sellerId: playerId, price: execPrice, qty: execQty, buyOrderId: top.id, sellOrderId: orderId });
       }
     }
-  }
-
-  executeLimitOrder(playerId, side, price, qty) {
-    let remainingQty = qty;
-
-    if (side === 'BUY') {
-      while (remainingQty > 0 && this.asks.length > 0 && this.asks[0].price <= price) {
-        const topAsk = this.asks[0];
-        const execQty = Math.min(remainingQty, topAsk.qty);
-        const execPrice = topAsk.price;
-
-        this.lastPrice = execPrice;
-        remainingQty -= execQty;
-        topAsk.qty -= execQty;
-
-        const trade = {
-          buyerId: playerId,
-          sellerId: topAsk.playerId,
-          price: execPrice,
-          qty: execQty
-        };
-
-        if (this.eventBus) this.eventBus.emit('TRADE', trade);
-
-        if (topAsk.qty <= 0) {
-          this.asks.shift();
-        }
-      }
-
-      if (remainingQty > 0) {
-        this.bids.push({ id: Math.random().toString(), playerId, price, qty: remainingQty });
-        this.bids.sort((a, b) => b.price - a.price);
-      }
-    } else {
-      while (remainingQty > 0 && this.bids.length > 0 && this.bids[0].price >= price) {
-        const topBid = this.bids[0];
-        const execQty = Math.min(remainingQty, topBid.qty);
-        const execPrice = topBid.price;
-
-        this.lastPrice = execPrice;
-        remainingQty -= execQty;
-        topBid.qty -= execQty;
-
-        const trade = {
-          buyerId: topBid.playerId,
-          sellerId: playerId,
-          price: execPrice,
-          qty: execQty
-        };
-
-        if (this.eventBus) this.eventBus.emit('TRADE', trade);
-
-        if (topBid.qty <= 0) {
-          this.bids.shift();
-        }
-      }
-
-      if (remainingQty > 0) {
-        this.asks.push({ id: Math.random().toString(), playerId, price, qty: remainingQty });
-        this.asks.sort((a, b) => a.price - b.price);
-      }
-    }
+    return { filledQty: filled, avgPrice: filled ? notional / filled : 0 };
   }
 }
