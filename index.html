@@ -1,38 +1,27 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Tomorrow Markets | P2P Trading Simulator</title>
-  
+  <title>Tomorrow Markets | The frontier in simulated markets</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+
   <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  
-  <!-- Fonts & Styling -->
+
+  <!-- Fonts: Source Serif 4 matches the Tomorrow company sites; Inter for UI and figures -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..600;1,8..60,300..500&display=swap" rel="stylesheet">
 
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
-            sans: ['Inter', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
-          },
-          colors: {
-            brand: {
-              bg: '#080c14',
-              panel: '#0f172a',
-              border: '#1e293b',
-              green: '#10b981',
-              red: '#ef4444',
-              blue: '#3b82f6',
-              yellow: '#f59e0b',
-            }
+            sans: ['Inter', 'system-ui', 'Segoe UI', 'sans-serif'],
+            serif: ['"Source Serif 4"', 'Georgia', 'serif'],
           }
         }
       }
@@ -40,327 +29,558 @@
   </script>
 
   <style>
-    body { background-color: #080c14; color: #f8fafc; font-family: 'Inter', sans-serif; user-select: none; }
-    .font-mono-num { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+    /* ================================================================
+       THEME TOKENS: change the look of the whole game from here.
+       ================================================================ */
+    :root {
+      --paper: #F6F8FB;
+      --ink: #0B1D47;          /* brand navy */
+      --ink-soft: #2A3B63;
+      --muted: #5A6B88;
+      --faint: #8C99B0;
+      --brand: #156082;        /* logo teal */
+      --gold: #B08D3C;
+      --gold-ink: #8A6A1F;     /* gold for text: readable on white */
+      --gold-tint: rgba(176, 141, 60, 0.16);
+      --bid: #0F8A5F;
+      --bid-tint: rgba(15, 138, 95, 0.11);
+      --ask: #C23B32;
+      --ask-tint: rgba(194, 59, 50, 0.10);
+      --line: rgba(11, 29, 71, 0.08);
+      --line-strong: rgba(11, 29, 71, 0.15);
+      --glass: rgba(255, 255, 255, 0.62);
+      --radius: 14px;
+    }
 
-    /* ---- Trading screen layout ------------------------------------------
-       Tall windows: the indicator workspace runs full width along the bottom.
-       Short windows: it moves under the chart, so the order book and the
-       order entry / positions column get the full height of the window.
-       min-height: 0 lets panels shrink and scroll inside themselves instead
-       of spilling out and sliding underneath each other.                   */
+    html, body { height: 100%; }
+    .hidden { display: none !important; } /* screen toggles must win over component display rules */
+    body {
+      color: var(--ink);
+      font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(60rem 40rem at 0% 0%, rgba(21, 96, 130, 0.09), transparent 62%),
+        radial-gradient(52rem 36rem at 100% 100%, rgba(176, 141, 60, 0.13), transparent 62%),
+        radial-gradient(rgba(11, 29, 71, 0.075) 1px, transparent 1.3px) 0 0 / 18px 18px,
+        var(--paper);
+    }
+    input { user-select: text; }
+    .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'cv11' 1; }
+    .serif { font-family: 'Source Serif 4', Georgia, serif; }
+    a { color: inherit; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(11, 29, 71, 0.16); border-radius: 3px; }
+
+    :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    /* ---- Text colours ---------------------------------------------- */
+    .t-ink { color: var(--ink); }
+    .t-muted { color: var(--muted); }
+    .t-faint { color: var(--faint); }
+    .t-gold { color: var(--gold-ink); }
+    .t-bid, .pos { color: var(--bid); }
+    .t-ask, .neg { color: var(--ask); }
+
+    /* ---- Glass panels ---------------------------------------------- */
+    .glass {
+      background: var(--glass);
+      -webkit-backdrop-filter: blur(16px) saturate(150%);
+      backdrop-filter: blur(16px) saturate(150%);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 0 0 1px var(--line), 0 14px 34px -24px rgba(11, 29, 71, 0.35);
+      border-radius: var(--radius);
+    }
+    .panel-title { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em; }
+    .panel-meta { font-size: 11px; color: var(--faint); }
+    .sublabel { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .count {
+      font-size: 10px; min-width: 18px; text-align: center; padding: 1px 5px; border-radius: 999px;
+      background: rgba(11, 29, 71, 0.06); color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .empty { font-size: 11px; color: var(--faint); padding: 2px 0; }
+
+    /* ---- Form controls --------------------------------------------- */
+    .label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 4px; }
+    .field {
+      width: 100%; background: rgba(255, 255, 255, 0.86); color: var(--ink);
+      border: 1px solid var(--line-strong); border-radius: 9px; padding: 7px 10px; font-size: 13px;
+      font-variant-numeric: tabular-nums; transition: border-color .15s, box-shadow .15s;
+    }
+    .field::placeholder { color: var(--faint); }
+    .field:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-tint); }
+    .field-sm { padding: 3px 7px; font-size: 11.5px; border-radius: 7px; }
+    #order-sl:focus { border-color: var(--ask); box-shadow: 0 0 0 3px var(--ask-tint); }
+    #order-tp:focus { border-color: var(--bid); box-shadow: 0 0 0 3px var(--bid-tint); }
+
+    /* ---- Buttons --------------------------------------------------- */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+      font-weight: 600; font-size: 13px; border-radius: 10px; padding: 9px 14px;
+      transition: background-color .15s, border-color .15s, color .15s, transform .05s; cursor: pointer;
+    }
+    .btn-lg { padding: 12px 16px; width: 100%; }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--ink); color: #fff; }
+    .btn-primary:hover { background: #142C63; }
+    .btn-ghost { background: rgba(255, 255, 255, 0.7); color: var(--ink); border: 1px solid var(--line-strong); }
+    .btn-ghost:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
+    .btn-gold { background: var(--gold); color: #fff; }
+    .btn-gold:hover { background: #9E7E33; }
+    .btn-buy { background: var(--bid); color: #fff; }
+    .btn-buy:hover { background: #0C7852; }
+    .btn-sell { background: var(--ask); color: #fff; }
+    .btn-sell:hover { background: #AB322A; }
+
+    .mini {
+      font-size: 10.5px; font-weight: 500; line-height: 1.4; padding: 1px 7px; border-radius: 6px; cursor: pointer;
+      background: #fff; color: var(--ink); border: 1px solid var(--line-strong); transition: all .12s;
+    }
+    .mini:hover { border-color: rgba(11, 29, 71, 0.35); }
+    .mini-danger { color: var(--ask); border-color: rgba(194, 59, 50, 0.3); }
+    .mini-danger:hover { background: var(--ask); border-color: var(--ask); color: #fff; }
+    .mini-primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+    .mini-primary:hover { background: #142C63; }
+
+    /* Segmented controls (order type, chart timeframe) */
+    .seg { background: rgba(11, 29, 71, 0.055); border-radius: 10px; padding: 3px; gap: 2px; }
+    .seg-btn {
+      font-size: 12px; font-weight: 500; color: var(--muted); border-radius: 7px; padding: 4px 10px; cursor: pointer;
+      transition: background-color .15s, color .15s;
+    }
+    .seg-btn:hover { color: var(--ink); }
+    .seg-btn.is-active { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 29, 71, 0.12), 0 0 0 1px var(--line); }
+
+    /* Chips */
+    .chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px; letter-spacing: 0.02em; }
+    .chip-buy { color: var(--bid); background: var(--bid-tint); }
+    .chip-sell { color: var(--ask); background: var(--ask-tint); }
+    .chip-neutral { color: var(--muted); background: rgba(11, 29, 71, 0.06); font-weight: 500; }
+    .chip-gold { color: var(--gold-ink); background: var(--gold-tint); }
+
+    /* Rows in working orders, SL/TP, lobby and rankings */
+    .row-card {
+      background: rgba(255, 255, 255, 0.74); border: 1px solid var(--line); border-radius: 9px;
+      padding: 6px 8px; font-size: 11.5px;
+    }
+    .row-card-roomy { padding: 8px 12px; }
+    .score-box { padding: 20px 16px; text-align: center; }
+    .code-box { padding: 12px; text-align: center; }
+    .row-card.is-editing, .row-card.is-me { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-tint); }
+
+    /* ---- Header ----------------------------------------------------- */
+    .topbar {
+      background: rgba(255, 255, 255, 0.55);
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--line);
+    }
+    .wordmark { font-family: 'Source Serif 4', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
+    .clock {
+      font-size: 12.5px; font-weight: 600; color: var(--ink); padding: 3px 10px; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.8); border: 1px solid rgba(176, 141, 60, 0.55);
+    }
+    .progress-track { background: rgba(11, 29, 71, 0.08); border-radius: 999px; overflow: hidden; }
+    .progress-fill { background: linear-gradient(90deg, #C9A85A, var(--gold)); height: 100%; border-radius: 999px; }
+
+    /* ---- Trading layout ----------------------------------------------
+       Chart and order book sit on top of the indicator workspace, which
+       spans both of their columns. Order entry and positions form the
+       right-hand column at full height. The top row never gets shorter
+       than 15 ask + 15 bid levels need; the indicator gets the rest
+       (about a third of the height on larger screens).                  */
     .trading-grid {
+      --row-min: 13px;
       display: grid;
-      grid-template-columns: minmax(0, 7fr) minmax(0, 2fr) minmax(0, 3fr);
-      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 7fr) minmax(0, 2.3fr) minmax(0, 3fr);
+      grid-template-rows: minmax(calc(30 * var(--row-min) + 6.5rem), 2fr) minmax(7rem, 1fr);
       grid-template-areas:
         "chart book side"
-        "ind   ind  ind";
+        "ind   ind  side";
+      overflow-y: auto;
     }
     .area-chart { grid-area: chart; min-height: 0; }
     .area-book  { grid-area: book;  min-height: 0; }
     .area-side  { grid-area: side;  min-height: 0; overflow-y: auto; }
-    .area-ind   { grid-area: ind;   min-height: 0; height: 9rem; }
+    .area-ind   { grid-area: ind;   min-height: 0; }
     .positions-panel { min-height: 18rem; }
 
-    @media (max-height: 939px) {
-      .trading-grid {
-        grid-template-areas:
-          "chart book side"
-          "ind   book side";
-      }
-      .area-ind { height: 7.5rem; }
+    .price-big { font-size: 15px; font-weight: 700; color: var(--ink); }
+
+    /* ---- Order book: 15 price levels a side with depth bars ---------- */
+    .book-head { font-size: 10.5px; color: var(--faint); border-bottom: 1px solid var(--line); }
+    .book-side {
+      flex: 1 1 0; min-height: calc(15 * var(--row-min));
+      display: grid; grid-template-rows: repeat(15, minmax(0, 1fr));
+    }
+    .lvl {
+      position: relative; display: grid; grid-template-columns: 1.15fr 0.8fr 1fr; align-items: center;
+      padding: 0 6px; font-size: 11px; line-height: 1; font-variant-numeric: tabular-nums; min-height: 0;
+    }
+    .lvl::before {
+      content: ""; position: absolute; top: 1px; bottom: 1px; right: 0; width: var(--d, 0%); border-radius: 3px;
+    }
+    .lvl > span { position: relative; }
+    .lvl > span:nth-child(n+2) { text-align: right; }
+    .lvl-ask > span:first-child { color: var(--ask); font-weight: 600; }
+    .lvl-bid > span:first-child { color: var(--bid); font-weight: 600; }
+    .lvl-ask::before { background: var(--ask-tint); }
+    .lvl-bid::before { background: var(--bid-tint); }
+    .lvl > span:nth-child(2) { color: var(--ink); font-weight: 500; }
+    .lvl > span:nth-child(3) { color: var(--faint); }
+    .book-spread {
+      display: flex; justify-content: space-between; align-items: center; margin: 3px 0; padding: 3px 6px;
+      font-size: 10.5px; color: var(--muted); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    }
+
+    /* ---- Account metrics -------------------------------------------- */
+    .metrics { border-top: 1px solid var(--line); font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .metric { display: flex; justify-content: space-between; align-items: baseline; }
+    .metric > span:first-child { color: var(--muted); }
+    .metric > span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+    .metric > span.pos { color: var(--bid); }
+    .metric > span.neg { color: var(--ask); }
+    .metric-rule { border-top: 1px solid var(--line); margin: 2px 0; }
+
+    .workspace {
+      border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--faint); font-size: 12px;
+      background: radial-gradient(rgba(176, 141, 60, 0.22) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(255, 255, 255, 0.45);
+    }
+
+    /* ---- Lobby -------------------------------------------------------- */
+    .lobby { background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%); }
+    .lobby-dots {
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(rgba(11, 29, 71, 0.11) 1px, transparent 1.3px) 0 0 / 22px 22px;
+      -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
+      mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
+    }
+    #lobby-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .statement {
+      font-family: 'Source Serif 4', Georgia, serif; font-weight: 300; color: var(--ink);
+      font-size: clamp(2.75rem, 6.2vw, 5.5rem); line-height: 1.02; letter-spacing: -0.025em;
+      text-shadow: 0 0 28px rgba(246, 248, 251, 0.95), 0 0 2px rgba(246, 248, 251, 0.9);
+    }
+    .lobby-card {
+      background: rgba(255, 255, 255, 0.58);
+      -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(11, 29, 71, 0.45);
+      border-radius: 18px;
+    }
+    .divider-label { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); }
+    .divider-label::before, .divider-label::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+    .footer-link { color: var(--ink); text-decoration: underline; text-decoration-color: var(--gold); text-underline-offset: 3px; }
+    .footer-link:hover { color: var(--gold-ink); }
+
+    /* ---- Toasts ------------------------------------------------------- */
+    .toast {
+      pointer-events: auto; max-width: 22rem; padding: 9px 12px; border-radius: 10px; font-size: 12px; color: var(--ink);
+      background: rgba(255, 255, 255, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      box-shadow: 0 0 0 1px var(--line), 0 12px 28px -16px rgba(11, 29, 71, 0.4);
+      border-left: 3px solid var(--faint); transition: opacity .3s;
+    }
+    .toast-success { border-left-color: var(--bid); }
+    .toast-warn { border-left-color: var(--gold); }
+    .toast-error { border-left-color: var(--ask); }
+
+    /* ---- Score screen ------------------------------------------------- */
+    .go-pnl { font-family: 'Source Serif 4', Georgia, serif; font-weight: 400; font-size: 3rem; line-height: 1.05; letter-spacing: -0.02em; }
+
+    /* Compact tier for short windows (e.g. laptops at 125% scaling): tighter
+       controls and the account figures in two columns, so the working-order
+       and SL/TP lists keep room to breathe. */
+    @media (max-height: 760px) {
+      .field { padding: 5px 9px; }
+      .btn-buy, .btn-sell { padding: 7px 12px; }
+      .metrics { display: grid; grid-template-columns: 1fr 1fr; column-gap: 18px; row-gap: 5px; font-size: 11.5px; }
+      .metric-rule { grid-column: 1 / -1; margin: 1px 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
     }
   </style>
 </head>
-<body class="h-screen w-screen overflow-hidden flex flex-col justify-between">
+<body class="h-screen w-screen overflow-hidden flex flex-col">
 
   <!-- Toast Notification Container -->
   <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-<!-- LOBBY & START SCREEN -->
-<div id="lobby-screen" class="flex-1 flex flex-col items-center justify-center p-4 relative overflow-y-auto">
-  
-  <!-- Step 1: Main Menu -->
-  <div id="lobby-menu" class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
-    <div class="text-center">
-      <h1 class="text-3xl font-extrabold tracking-tight text-white">TOMORROW <span class="text-blue-500">MARKETS</span></h1>
-      <p class="text-xs text-slate-400 mt-1">Peer-to-Peer Order Book Trading Engine</p>
-    </div>
+  <!-- ================================================================
+       LOBBY & START SCREEN
+       ================================================================ -->
+  <div id="lobby-screen" class="lobby flex-1 min-h-0 relative flex flex-col overflow-hidden">
+    <canvas id="lobby-canvas" aria-hidden="true"></canvas>
+    <div class="lobby-dots" aria-hidden="true"></div>
 
-    <div class="space-y-4">
-      <div>
-        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Trader Handle</label>
-        <input type="text" id="trader-name-input" value="Trader_1" class="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono" />
-      </div>
+    <div class="relative z-10 flex-1 min-h-0 flex flex-col">
+      <header class="px-8 md:px-14 pt-7 flex items-center gap-3 shrink-0">
+        <img src="assets/logo.svg" alt="" class="w-8 h-8 rounded-[3px]" />
+        <span class="wordmark text-[26px] leading-none">Tomorrow Markets</span>
+      </header>
 
-      <div class="grid grid-cols-2 gap-3 pt-2">
-        <button id="btn-single-player" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors shadow-lg cursor-pointer">
-          Single Player
-        </button>
-        <button id="btn-host-multiplayer" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors border border-slate-700 cursor-pointer">
-          Host Multiplayer
-        </button>
-      </div>
+      <main class="flex-1 min-h-0 overflow-y-auto px-8 md:px-14 py-8 grid lg:grid-cols-[minmax(0,1fr)_24rem] items-center gap-10">
+        <h1 class="statement">The frontier in<br />simulated markets.</h1>
 
-      <!-- Join Multiplayer Section -->
-      <div class="border-t border-slate-800 pt-4 space-y-2">
-        <label class="block text-xs font-semibold uppercase text-slate-400">Join Room Code</label>
-        <div class="flex gap-2">
-          <input type="text" id="room-code-input" placeholder="e.g. 849201" class="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono uppercase" />
-          <button id="btn-join-multiplayer" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer">
-            Join
-          </button>
+        <div class="w-full max-w-sm lg:justify-self-end">
+          <!-- Step 1: Main Menu -->
+          <div id="lobby-menu" class="lobby-card p-6 space-y-5">
+            <div>
+              <label for="trader-name-input" class="label">Trader handle</label>
+              <input type="text" id="trader-name-input" value="Trader_1" maxlength="16" class="field" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-2.5">
+              <button id="btn-single-player" class="btn btn-primary">Single player</button>
+              <button id="btn-host-multiplayer" class="btn btn-ghost">Host multiplayer</button>
+            </div>
+
+            <div class="divider-label">or join a room</div>
+
+            <div class="flex gap-2">
+              <label for="room-code-input" class="sr-only">Room code</label>
+              <input type="text" id="room-code-input" inputmode="numeric" placeholder="Room code, e.g. 849201" class="field num flex-1" />
+              <button id="btn-join-multiplayer" class="btn btn-ghost">Join</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Waiting Room Lobby -->
+          <div id="waiting-room" class="hidden lobby-card p-6 space-y-5">
+            <div>
+              <h2 class="serif text-[28px] font-normal leading-tight t-ink">Waiting for players</h2>
+              <p class="text-xs t-muted mt-1">Share the room code with the traders you want to play against.</p>
+            </div>
+
+            <div class="row-card code-box">
+              <span class="block text-[11px] t-muted mb-0.5">Room code</span>
+              <div id="display-room-code" class="num text-[32px] font-semibold tracking-[0.12em] t-ink">------</div>
+            </div>
+
+            <div>
+              <div class="flex justify-between items-center mb-2">
+                <span class="sublabel">Connected traders</span>
+                <span id="player-count" class="text-xs t-faint num">1 Player</span>
+              </div>
+              <div id="player-list" class="space-y-1.5 max-h-40 overflow-y-auto pr-1"></div>
+            </div>
+
+            <div id="host-controls">
+              <button id="btn-start-game" class="btn btn-gold btn-lg">Start game</button>
+            </div>
+
+            <div id="client-status" class="hidden text-center text-xs t-muted animate-pulse">
+              Waiting for the host to open the market…
+            </div>
+          </div>
         </div>
-      </div>
+      </main>
+
+      <footer class="px-8 md:px-14 pb-6 shrink-0 text-[13px] t-muted">
+        For the company, visit
+        <a class="footer-link" href="https://tomorrowcapitalresearch.github.io" target="_blank" rel="noopener">Tomorrow Capital Research</a>.
+      </footer>
     </div>
   </div>
 
-  <!-- Step 2: Waiting Room Lobby -->
-  <div id="waiting-room" class="hidden max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-6">
-    <div class="text-center">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-400">MULTIPLAYER LOBBY</span>
-      <h2 class="text-2xl font-bold text-white mt-1">Waiting for Players</h2>
-    </div>
+  <!-- ================================================================
+       TRADING DASHBOARD SCREEN
+       ================================================================ -->
+  <div id="trading-screen" class="hidden flex-1 min-h-0 flex flex-col overflow-hidden">
 
-    <!-- Room Code Box -->
-    <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 text-center">
-      <span class="text-xs text-slate-500 font-mono block mb-1">SHARE ROOM CODE</span>
-      <div id="display-room-code" class="text-3xl font-extrabold font-mono tracking-wider text-emerald-400">------</div>
-    </div>
-
-    <!-- Connected Players List -->
-    <div>
-      <div class="flex justify-between items-center mb-2">
-        <span class="text-xs font-semibold uppercase text-slate-400">Connected Traders</span>
-        <span id="player-count" class="text-xs font-mono text-slate-500">1 Player</span>
+    <!-- Top Navigation Header -->
+    <header class="topbar h-12 px-4 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-3">
+        <img src="assets/logo.svg" alt="" class="w-6 h-6 rounded-[3px]" />
+        <span class="wordmark text-[18px] leading-none">Tomorrow Markets</span>
+        <span class="chip chip-neutral ml-1">Spot / USD</span>
+        <span id="room-badge" class="hidden chip chip-gold">Room <span id="room-code-display" class="num">------</span></span>
       </div>
-      <div id="player-list" class="space-y-1.5 max-h-40 overflow-y-auto">
-        <!-- Player items rendered dynamically -->
-      </div>
-    </div>
-
-    <!-- Host Actions / Client Status -->
-    <div id="host-controls" class="pt-2">
-      <button id="btn-start-game" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg text-sm transition-colors shadow-lg cursor-pointer">
-        Start Game
-      </button>
-    </div>
-
-    <div id="client-status" class="hidden text-center text-xs text-slate-400 font-mono pt-2 animate-pulse">
-      Waiting for host to launch market...
-    </div>
-  </div>
-
-</div>
-
- <!-- TRADING DASHBOARD SCREEN -->
-<div id="trading-screen" class="hidden flex-1 flex flex-col h-full bg-slate-950 text-slate-200 overflow-hidden">
-  
-  <!-- Top Navigation Header -->
-  <header class="h-12 border-b border-slate-800 bg-slate-900/80 px-4 flex items-center justify-between shrink-0">
-    <div class="flex items-center space-x-3">
-      <span class="font-extrabold tracking-tight text-white text-sm">TOMORROW <span class="text-blue-500">MARKETS</span></span>
-      <span class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">SPOT / USD</span>
-      <span id="room-badge" class="hidden text-xs bg-blue-950 text-blue-400 border border-blue-800 px-2 py-0.5 rounded font-mono">
-        ROOM: <span id="room-code-display">------</span>
-      </span>
-    </div>
-    <div class="flex items-center space-x-3 text-xs font-mono">
-      <div class="hidden md:flex items-center gap-2 text-[10px] text-slate-500">
-        <span>09:30 AM</span>
-        <div class="w-32 h-1.5 bg-slate-800 rounded-full overflow-hidden" role="progressbar" aria-label="Trading day progress">
-          <div id="session-progress" class="h-full bg-emerald-500/80 rounded-full" style="width: 0%"></div>
+      <div class="flex items-center gap-4">
+        <div class="hidden md:flex items-center gap-2 text-[11px] t-faint num">
+          <span>09:30 AM</span>
+          <div class="progress-track w-36 h-1.5" role="progressbar" aria-label="Trading day progress">
+            <div id="session-progress" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <span>06:00 PM</span>
         </div>
-        <span>06:00 PM</span>
+        <span id="sim-clock" class="clock num">09:30:00 AM</span>
       </div>
-      <span id="sim-clock" class="text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-800/60 px-2 py-1 rounded">09:30:00 AM</span>
-    </div>
-  </header>
+    </header>
 
-  <!-- Main Trading Core: chart / book / side column / indicator workspace.
-       Areas rearrange with window height; see .trading-grid in <style>. -->
-  <div class="trading-grid flex-1 min-h-0 p-2 gap-2">
+    <!-- Main Trading Core. Areas: chart | book | side, with the indicator
+         workspace under chart + book (see .trading-grid in <style>). -->
+    <div class="trading-grid flex-1 min-h-0 p-2.5 gap-2.5">
 
       <!-- Price Action Chart -->
-      <div class="area-chart bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col">
-        <div class="flex justify-between items-center mb-2">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-bold text-slate-400 tracking-wider">PRICE ACTION</span>
-            <span id="mid-price-display" class="text-sm font-extrabold font-mono text-white">$100.00</span>
+      <section class="area-chart glass p-3.5 flex flex-col">
+        <div class="flex justify-between items-center mb-2 shrink-0">
+          <div class="flex items-baseline gap-2.5">
+            <span class="panel-title">Price action</span>
+            <span id="mid-price-display" class="price-big num">$100.00</span>
           </div>
-          <!-- Timeframe Selector Buttons -->
-          <div class="flex space-x-1 text-[11px] font-mono bg-slate-950 p-0.5 rounded border border-slate-800">
-            <button data-tf="1M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer">1M</button>
-            <button data-tf="5M" class="tf-btn px-2 py-0.5 rounded bg-blue-600 text-white font-bold cursor-pointer">5M</button>
-            <button data-tf="10M" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer">10M</button>
-            <button data-tf="1H" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer">1H</button>
-            <button data-tf="ALL" class="tf-btn px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer">ALL</button>
+          <div class="seg flex">
+            <button data-tf="1M" class="tf-btn seg-btn">1M</button>
+            <button data-tf="5M" class="tf-btn seg-btn is-active">5M</button>
+            <button data-tf="10M" class="tf-btn seg-btn">10M</button>
+            <button data-tf="1H" class="tf-btn seg-btn">1H</button>
+            <button data-tf="ALL" class="tf-btn seg-btn">All</button>
           </div>
         </div>
         <div class="flex-1 relative w-full min-h-0">
           <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
         </div>
-      </div>
+      </section>
 
       <!-- Order Book -->
-      <div class="area-book bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col font-mono text-xs">
-        <div class="text-[11px] font-bold text-slate-400 tracking-wider mb-2 flex justify-between">
-          <span>ORDER BOOK</span>
-          <span>SPREAD: <span id="spread-display" class="text-white">$0.00</span></span>
+      <section class="area-book glass p-3 flex flex-col">
+        <div class="flex items-baseline justify-between mb-2 shrink-0">
+          <span class="panel-title">Order book</span>
+          <span class="panel-meta">15 levels</span>
         </div>
-        <div class="grid grid-cols-3 text-[10px] text-slate-500 border-b border-slate-800 pb-1 mb-1 font-sans">
-          <span>PRICE</span>
-          <span class="text-right">QTY</span>
-          <span class="text-right">TOTAL</span>
+        <div class="book-head grid grid-cols-[1.15fr_0.8fr_1fr] px-1.5 pb-1 mb-1 shrink-0">
+          <span>Price</span><span class="text-right">Qty</span><span class="text-right">Total</span>
         </div>
-        <!-- Asks List (Red) -->
-        <div id="asks-container" class="flex-1 flex flex-col justify-end space-y-0.5 overflow-hidden"></div>
-        <!-- Spread Divider -->
-        <div class="my-1 border-t border-b border-slate-800 py-0.5 text-center text-[10px] text-slate-500 uppercase tracking-widest font-sans">
-          Spread
+        <div id="asks-container" class="book-side"></div>
+        <div class="book-spread shrink-0">
+          <span>Spread</span>
+          <span id="spread-display" class="num font-semibold t-ink">$0.00</span>
         </div>
-        <!-- Bids List (Green) -->
-        <div id="bids-container" class="flex-1 flex flex-col space-y-0.5 overflow-hidden"></div>
-      </div>
+        <div id="bids-container" class="book-side"></div>
+      </section>
 
-      <!-- Order Entry & Positions (scrolls as a last resort on very short windows) -->
-      <div class="area-side flex flex-col gap-2">
-        
+      <!-- Order Entry & Positions -->
+      <div class="area-side flex flex-col gap-2.5">
+
         <!-- Order Entry Form -->
-        <div class="bg-slate-900 border border-slate-800/80 rounded-lg p-3 space-y-3 shrink-0">
-          <div class="text-[11px] font-bold text-slate-400 tracking-wider">ORDER ENTRY</div>
-          
-          <div class="grid grid-cols-2 gap-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
-            <button id="type-limit-btn" class="py-1 text-center rounded bg-blue-600 text-white font-bold cursor-pointer">LIMIT</button>
-            <button id="type-market-btn" class="py-1 text-center rounded text-slate-400 hover:text-white cursor-pointer">MARKET</button>
+        <section class="glass p-3.5 space-y-3 shrink-0">
+          <div class="panel-title">Order entry</div>
+
+          <div class="seg grid grid-cols-2">
+            <button id="type-limit-btn" class="seg-btn is-active">Limit</button>
+            <button id="type-market-btn" class="seg-btn">Market</button>
           </div>
 
-          <div class="space-y-2 text-xs">
+          <div class="space-y-2.5">
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label for="order-qty" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Quantity</label>
-                <input type="number" id="order-qty" value="10" min="1" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
+                <label for="order-qty" class="label">Quantity</label>
+                <input type="number" id="order-qty" value="10" min="1" class="field num" />
               </div>
-              <div id="price-input-container">
-                <label for="order-price" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Limit Price ($)</label>
-                <input type="number" id="order-price" value="100.00" step="0.01" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500" />
+              <div id="price-input-container" class="transition-opacity">
+                <label for="order-price" class="label">Limit price ($)</label>
+                <input type="number" id="order-price" value="100.00" step="0.01" class="field num" />
               </div>
             </div>
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label for="order-sl" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Stop Loss ($)</label>
-                <input type="number" id="order-sl" step="0.01" min="0" placeholder="Optional" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-red-500 placeholder:text-slate-600" />
+                <label for="order-sl" class="label">Stop loss ($)</label>
+                <input type="number" id="order-sl" step="0.01" min="0" placeholder="Optional" class="field num" />
               </div>
               <div>
-                <label for="order-tp" class="block text-[10px] text-slate-400 uppercase font-mono mb-1">Take Profit ($)</label>
-                <input type="number" id="order-tp" step="0.01" min="0" placeholder="Optional" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-600" />
+                <label for="order-tp" class="label">Take profit ($)</label>
+                <input type="number" id="order-tp" step="0.01" min="0" placeholder="Optional" class="field num" />
               </div>
             </div>
           </div>
 
-          <div class="grid grid-cols-2 gap-2 pt-1 font-mono text-xs">
-            <button id="btn-buy" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded transition-colors cursor-pointer">BUY / LONG</button>
-            <button id="btn-sell" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded transition-colors cursor-pointer">SELL / SHORT</button>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="btn-buy" class="btn btn-buy">Buy / Long</button>
+            <button id="btn-sell" class="btn btn-sell">Sell / Short</button>
           </div>
-        </div>
+        </section>
 
-        <!-- POSITIONS & PnL Panel: order lists scroll, account figures stay pinned -->
-        <div class="positions-panel bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex-1 flex flex-col font-mono text-xs">
-          <div class="text-[11px] font-bold text-slate-400 tracking-wider mb-2 shrink-0">POSITIONS & PnL</div>
+        <!-- Positions & PnL: order lists scroll, account figures stay pinned -->
+        <section class="positions-panel glass p-3.5 flex-1 flex flex-col">
+          <div class="panel-title mb-2.5 shrink-0">Positions &amp; PnL</div>
 
-          <div class="flex-1 min-h-0 overflow-y-auto pr-1">
-            <!-- Working Unfilled Orders Container -->
-            <div class="mb-3 border-b border-slate-800/80 pb-2">
-              <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-sans flex justify-between items-center">
-                <span>Working Orders</span>
-                <span id="open-orders-count" class="text-[9px] bg-slate-800 text-slate-400 px-1 rounded">0</span>
+          <div class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
+            <div>
+              <div class="sublabel flex justify-between items-center mb-1.5">
+                <span>Working orders</span>
+                <span id="open-orders-count" class="count">0</span>
               </div>
-              <div id="open-orders-list" class="space-y-1">
-                <div class="text-[10px] text-slate-600 italic py-1">No active open orders</div>
+              <div id="open-orders-list" class="space-y-1.5">
+                <div class="empty">No active open orders</div>
               </div>
             </div>
 
-            <!-- Stop loss / take profit protecting filled positions -->
-            <div class="pb-2">
-              <div class="text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-sans flex justify-between items-center">
+            <div>
+              <div class="sublabel flex justify-between items-center mb-1.5">
                 <span>Active SL / TP</span>
-                <span id="brackets-count" class="text-[9px] bg-slate-800 text-slate-400 px-1 rounded">0</span>
+                <span id="brackets-count" class="count">0</span>
               </div>
-              <div id="brackets-list" class="space-y-1">
-                <div class="text-[10px] text-slate-600 italic py-1">No stop loss or take profit on open positions</div>
+              <div id="brackets-list" class="space-y-1.5">
+                <div class="empty">No stop loss or take profit on open positions</div>
               </div>
             </div>
           </div>
 
-          <!-- Account Metrics Summary -->
-          <div class="space-y-1.5 text-[11px] pt-2 mt-1 border-t border-slate-800/80 shrink-0">
-            <div class="flex justify-between"><span class="text-slate-400">CASH BALANCE</span><span id="port-cash" class="text-white font-bold">$10,000.00</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">SHARES HELD</span><span id="port-shares" class="text-white font-bold">0</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">AVG ENTRY</span><span id="port-avg-price" class="text-slate-300">$0.00</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">POSITION VALUE</span><span id="port-pos-val" class="text-slate-300">$0.00</span></div>
-            <div class="border-t border-slate-800 my-1"></div>
-            <div class="flex justify-between"><span class="text-slate-400">UNREALIZED PnL</span><span id="port-unrealized" class="text-emerald-400 font-bold">+$0.00</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">REALIZED PnL</span><span id="port-realized" class="text-emerald-400 font-bold">+$0.00</span></div>
+          <div class="metrics shrink-0 mt-2.5 pt-2.5">
+            <div class="metric"><span>Cash balance</span><span id="port-cash">$10,000.00</span></div>
+            <div class="metric"><span>Shares held</span><span id="port-shares">0</span></div>
+            <div class="metric"><span>Avg entry</span><span id="port-avg-price">$0.00</span></div>
+            <div class="metric"><span>Position value</span><span id="port-pos-val">$0.00</span></div>
+            <div class="metric-rule"></div>
+            <div class="metric"><span>Unrealized PnL</span><span id="port-unrealized" class="pos">+$0.00</span></div>
+            <div class="metric"><span>Realized PnL</span><span id="port-realized" class="pos">+$0.00</span></div>
           </div>
-        </div>
-
+        </section>
       </div>
 
-      <!-- Strategy & Technical Indicators Workspace (Reserved): full width on tall
-           windows, under the chart on short ones -->
-      <div id="indicator-panel" class="area-ind bg-slate-900 border border-slate-800/80 rounded-lg p-3 flex flex-col">
-      <div class="flex items-center justify-between mb-2 border-b border-slate-800/80 pb-1.5">
-        <div class="flex items-center space-x-2">
-          <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-          <span class="text-[11px] font-bold text-slate-400 tracking-wider uppercase font-mono">Indicator & Algorithmic Strategy Engine</span>
+      <!-- Strategy & Technical Indicators Workspace (Reserved) -->
+      <section id="indicator-panel" class="area-ind glass p-3.5 flex flex-col">
+        <div class="flex items-center justify-between mb-2.5 shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--gold)"></span>
+            <span class="panel-title">Indicator &amp; algorithmic strategy engine</span>
+          </div>
+          <span class="panel-meta">Workspace inactive</span>
         </div>
-        <span class="text-[10px] text-slate-600 font-mono">Workspace (Inactive)</span>
-      </div>
-      <!-- Blank Code/Indicator Canvas Container -->
-      <div class="flex-1 bg-slate-950 border border-slate-800/50 rounded flex items-center justify-center relative overflow-hidden">
-        <div class="absolute inset-0 opacity-5 bg-[radial-gradient(#3b82f6_1px,transparent_1px)] [background-size:16px_16px]"></div>
-        <span class="text-slate-600 text-xs font-mono tracking-wide">Workspace reserved for script execution & technical indicator overlay</span>
-      </div>
+        <div class="workspace flex-1 min-h-0 flex items-center justify-center text-center px-4">
+          Workspace reserved for script execution and technical indicator overlays
+        </div>
+      </section>
+
     </div>
-
   </div>
-</div>
 
-  <!-- GAME OVER / SCORE SCREEN -->
-  <div id="game-over" class="hidden fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="go-title">
-    <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl space-y-5">
+  <!-- ================================================================
+       GAME OVER / SCORE SCREEN
+       ================================================================ -->
+  <div id="game-over" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(246, 248, 251, 0.55); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);" role="dialog" aria-modal="true" aria-labelledby="go-title">
+    <div class="lobby-card max-w-md w-full p-7 space-y-5">
       <div class="text-center">
-        <span class="text-xs font-bold uppercase tracking-widest text-blue-400">Closing bell</span>
-        <h2 id="go-title" class="text-2xl font-bold text-white mt-1">Market closed</h2>
-        <p id="go-subtitle" class="text-xs text-slate-400 mt-1"></p>
+        <div class="flex items-center justify-center gap-2 mb-3">
+          <img src="assets/logo.svg" alt="" class="w-5 h-5 rounded-[2px]" />
+          <span class="text-xs t-gold font-semibold">Closing bell</span>
+        </div>
+        <h2 id="go-title" class="serif text-[32px] font-normal leading-tight t-ink">Market closed</h2>
+        <p id="go-subtitle" class="text-xs t-muted mt-1.5"></p>
       </div>
 
-      <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 text-center">
-        <span class="text-xs text-slate-500 font-mono block mb-1">YOUR TOTAL PnL</span>
-        <div id="go-pnl" class="text-4xl font-extrabold font-mono-num text-white">+$0.00</div>
-        <div id="go-return" class="text-xs font-mono text-slate-400 mt-1"></div>
-        <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800 text-[11px] font-mono">
-          <div><span class="block text-slate-500">REALIZED</span><span id="go-realized" class="font-bold">+$0.00</span></div>
-          <div><span class="block text-slate-500">UNREALIZED</span><span id="go-unrealized" class="font-bold">+$0.00</span></div>
+      <div class="row-card score-box">
+        <span class="block text-xs t-muted mb-1">Your total PnL</span>
+        <div id="go-pnl" class="go-pnl num">+$0.00</div>
+        <div id="go-return" class="text-xs t-muted mt-1.5 num"></div>
+        <div class="grid grid-cols-2 gap-2 mt-4 pt-3 text-xs" style="border-top: 1px solid var(--line)">
+          <div><span class="block t-muted mb-0.5">Realized</span><span id="go-realized" class="num font-semibold">+$0.00</span></div>
+          <div><span class="block t-muted mb-0.5">Unrealized</span><span id="go-unrealized" class="num font-semibold">+$0.00</span></div>
         </div>
-        <p id="go-note" class="hidden text-[10px] text-slate-500 mt-3"></p>
+        <p id="go-note" class="hidden text-[11px] t-faint mt-3"></p>
       </div>
 
       <div id="go-rankings" class="hidden">
         <div class="flex justify-between items-center mb-2">
-          <span class="text-xs font-semibold uppercase text-slate-400">Rankings</span>
-          <span id="go-rank-summary" class="text-xs font-mono text-slate-500"></span>
+          <span class="sublabel">Rankings</span>
+          <span id="go-rank-summary" class="text-xs t-faint"></span>
         </div>
-        <div id="go-rank-list" class="space-y-1.5 max-h-60 overflow-y-auto"></div>
+        <div id="go-rank-list" class="space-y-1.5 max-h-60 overflow-y-auto pr-1"></div>
       </div>
 
-      <button id="btn-back-to-menu" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg text-sm transition-colors shadow-lg cursor-pointer">
-        Back to menu
-      </button>
+      <button id="btn-back-to-menu" class="btn btn-primary btn-lg">Back to menu</button>
     </div>
   </div>
 
