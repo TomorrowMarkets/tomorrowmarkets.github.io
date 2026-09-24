@@ -1,4 +1,6 @@
 import { PeerNetwork } from './net/PeerNetwork.js';
+import { OrderBook } from './engine/OrderBook.js';
+import { BotFleet } from './engine/BotFleet.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -276,144 +278,8 @@ class Ledger {
 }
 
 // ===================================================================
-// 3. ORDER BOOK MATCHING ENGINE
+// 3. ORDER BOOK: see ./engine/OrderBook.js
 // ===================================================================
-class OrderBook {
-  constructor(eventBus) {
-    this.eventBus = eventBus;
-    this.bids = []; // best (highest) first
-    this.asks = []; // best (lowest) first
-    this.lastPrice = 100.0;
-    this.currentTick = 0;
-    this.seq = 0;
-  }
-
-  nextId(prefix = 'o') {
-    this.seq += 1;
-    return `${prefix}${this.seq}`;
-  }
-
-  getMidPrice() {
-    if (this.bids.length > 0 && this.asks.length > 0) return (this.bids[0].price + this.asks[0].price) / 2;
-    if (this.bids.length > 0) return this.bids[0].price;
-    if (this.asks.length > 0) return this.asks[0].price;
-    return this.lastPrice || 100.0;
-  }
-
-  // Binary insert keeps price-time priority without re-sorting the whole book.
-  insert(side, order) {
-    const book = side === 'BUY' ? this.bids : this.asks;
-    const isBetter = side === 'BUY' ? (a, b) => a > b : (a, b) => a < b;
-    let lo = 0;
-    let hi = book.length;
-    while (lo < hi) {
-      const m = (lo + hi) >> 1;
-      if (isBetter(order.price, book[m].price)) hi = m;
-      else lo = m + 1;
-    }
-    book.splice(lo, 0, order);
-  }
-
-  clearPlayerOrders(playerId) {
-    this.bids = this.bids.filter((b) => b.playerId !== playerId);
-    this.asks = this.asks.filter((a) => a.playerId !== playerId);
-  }
-
-  expireOrders(tick) {
-    const alive = (o) => o.expiresAt == null || o.expiresAt > tick;
-    this.bids = this.bids.filter(alive);
-    this.asks = this.asks.filter(alive);
-  }
-
-  findOrder(orderId) {
-    let order = this.bids.find((o) => o.id === orderId);
-    if (order) return { order, side: 'BUY' };
-    order = this.asks.find((o) => o.id === orderId);
-    return order ? { order, side: 'SELL' } : null;
-  }
-
-  removeOrder(orderId, playerId) {
-    for (const [book, side] of [[this.bids, 'BUY'], [this.asks, 'SELL']]) {
-      const idx = book.findIndex((o) => o.id === orderId && o.playerId === playerId);
-      if (idx !== -1) return { order: book.splice(idx, 1)[0], side };
-    }
-    return null;
-  }
-
-  cancelOrder(orderId, playerId) {
-    return this.removeOrder(orderId, playerId) !== null;
-  }
-
-  getPlayerOpenOrders(playerId) {
-    return [
-      ...this.bids.filter((b) => b.playerId === playerId).map((b) => ({ ...b, side: 'BUY' })),
-      ...this.asks.filter((a) => a.playerId === playerId).map((a) => ({ ...a, side: 'SELL' }))
-    ];
-  }
-
-  // Returns { id, filledQty, avgPrice, restingQty } or null if the order was invalid.
-  processOrder(order) {
-    const { playerId, side } = order;
-    const qty = Math.floor(order.qty);
-    if (!(qty > 0)) return null;
-    const id = order.id || this.nextId('b');
-
-    if (order.type === 'MARKET') {
-      const r = this.match(playerId, side, qty, null, id);
-      return { id, ...r, restingQty: 0 };
-    }
-
-    const price = round2(order.price);
-    if (!(price > 0)) return null;
-    const r = this.match(playerId, side, qty, price, id);
-    const restingQty = qty - r.filledQty;
-    if (restingQty > 0) {
-      this.insert(side, { id, playerId, price, qty: restingQty, expiresAt: order.expiresAt ?? null });
-    }
-    return { id, ...r, restingQty };
-  }
-
-  match(playerId, side, qty, limitPrice, orderId) {
-    const book = side === 'BUY' ? this.asks : this.bids;
-    let remaining = qty;
-    let filled = 0;
-    let notional = 0;
-
-    while (remaining > 0 && book.length > 0) {
-      const top = book[0];
-      if (limitPrice != null && (side === 'BUY' ? top.price > limitPrice : top.price < limitPrice)) break;
-
-      const execQty = Math.min(remaining, top.qty);
-      const execPrice = top.price;
-      remaining -= execQty;
-      filled += execQty;
-      notional += execQty * execPrice;
-      top.qty -= execQty;
-      if (top.qty <= 0) book.shift();
-      this.lastPrice = execPrice;
-
-      if (this.eventBus) {
-        this.eventBus.emit('TRADE', side === 'BUY'
-          ? { buyerId: playerId, sellerId: top.playerId, price: execPrice, qty: execQty, buyOrderId: orderId, sellOrderId: top.id }
-          : { buyerId: top.playerId, sellerId: playerId, price: execPrice, qty: execQty, buyOrderId: top.id, sellOrderId: orderId });
-      }
-    }
-    return { filledQty: filled, avgPrice: filled ? notional / filled : 0 };
-  }
-}
-
-// Collapse individual resting orders (already sorted best-first) into
-// price levels: one row per price with the total quantity at that price.
-function aggregateLevels(orders, depth) {
-  const levels = [];
-  for (const o of orders) {
-    const last = levels[levels.length - 1];
-    if (last && last.price === o.price) last.qty += o.qty;
-    else if (levels.length === depth) break;
-    else levels.push({ price: o.price, qty: o.qty });
-  }
-  return levels;
-}
 
 // ===================================================================
 // 4. STOP LOSS / TAKE PROFIT (authority only)
@@ -551,129 +417,9 @@ class BracketManager {
 }
 
 // ===================================================================
-// 5. BOT ECOSYSTEM
-// Bot ids contain a colon, which player handles can never contain.
+// 5. BOTS: see ./engine/bots.js (strategies) and ./engine/BotFleet.js
+//    (population, daily schedule, US-open event)
 // ===================================================================
-class MarketMakerBot {
-  constructor(id, orderBook) {
-    this.id = id;
-    this.orderBook = orderBook;
-    this.spread = 0.05 + Math.random() * 0.05;
-    this.baseQty = Math.floor(Math.random() * 20) + 15;
-  }
-
-  onTick() {
-    this.orderBook.clearPlayerOrders(this.id);
-    const mid = this.orderBook.getMidPrice();
-
-    for (let level = 1; level <= 4; level++) {
-      const bidPrice = parseFloat((mid - this.spread * level).toFixed(2));
-      const askPrice = parseFloat((mid + this.spread * level).toFixed(2));
-      if (bidPrice > 0) {
-        this.orderBook.processOrder({ playerId: this.id, side: 'BUY', price: bidPrice, qty: this.baseQty * level, type: 'LIMIT' });
-      }
-      this.orderBook.processOrder({ playerId: this.id, side: 'SELL', price: askPrice, qty: this.baseQty * level, type: 'LIMIT' });
-    }
-  }
-}
-
-class NoiseBot {
-  constructor(id, orderBook) {
-    this.id = id;
-    this.orderBook = orderBook;
-    this.actProbability = 0.15;
-  }
-
-  onTick() {
-    if (Math.random() > this.actProbability) return;
-    const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const isMarket = Math.random() > 0.4;
-    const qty = Math.floor(Math.random() * 10) + 1;
-    const mid = this.orderBook.getMidPrice();
-
-    if (isMarket) {
-      this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty, type: 'MARKET' });
-    } else {
-      const offset = (Math.random() - 0.5) * 0.3;
-      const price = parseFloat((mid + offset).toFixed(2));
-      if (price > 0) {
-        this.orderBook.processOrder({
-          playerId: this.id, side, price, qty, type: 'LIMIT',
-          expiresAt: this.orderBook.currentTick + NOISE_ORDER_TTL_TICKS
-        });
-      }
-    }
-  }
-}
-
-class TrendBot {
-  constructor(id, orderBook) {
-    this.id = id;
-    this.orderBook = orderBook;
-    this.lookback = Math.floor(Math.random() * 5) + 4;
-  }
-
-  onTick(history) {
-    if (!history || history.length < this.lookback) return;
-    const recent = history.slice(-this.lookback);
-    const diff = recent[recent.length - 1].price - recent[0].price;
-    if (Math.abs(diff) >= 0.15) {
-      const side = diff > 0 ? 'BUY' : 'SELL';
-      const qty = Math.floor(Math.random() * 12) + 4;
-      this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty, type: 'MARKET' });
-    }
-  }
-}
-
-class MeanReversionBot {
-  constructor(id, orderBook) {
-    this.id = id;
-    this.orderBook = orderBook;
-    this.period = 10;
-  }
-
-  onTick(history) {
-    if (!history || history.length < this.period) return;
-    const recent = history.slice(-this.period);
-    const sma = recent.reduce((acc, p) => acc + p.price, 0) / this.period;
-    const dev = this.orderBook.getMidPrice() - sma;
-    if (dev > 0.25) {
-      this.orderBook.processOrder({ playerId: this.id, side: 'SELL', price: 0, qty: 10, type: 'MARKET' });
-    } else if (dev < -0.25) {
-      this.orderBook.processOrder({ playerId: this.id, side: 'BUY', price: 0, qty: 10, type: 'MARKET' });
-    }
-  }
-}
-
-class WhaleBot {
-  constructor(id, orderBook) {
-    this.id = id;
-    this.orderBook = orderBook;
-    this.triggerThreshold = 0.02;
-  }
-
-  onTick() {
-    if (Math.random() > this.triggerThreshold) return;
-    const side = Math.random() > 0.5 ? 'BUY' : 'SELL';
-    const blockQty = Math.floor(Math.random() * 60) + 30;
-    this.orderBook.processOrder({ playerId: this.id, side, price: 0, qty: blockQty, type: 'MARKET' });
-  }
-}
-
-class BotFleet {
-  constructor(orderBook) {
-    this.bots = [];
-    for (let i = 0; i < 90; i++) this.bots.push(new NoiseBot(`bot:noise_${i}`, orderBook));
-    for (let i = 0; i < 5; i++) this.bots.push(new TrendBot(`bot:trend_${i}`, orderBook));
-    for (let i = 0; i < 5; i++) this.bots.push(new MeanReversionBot(`bot:mr_${i}`, orderBook));
-    for (let i = 0; i < 3; i++) this.bots.push(new MarketMakerBot(`bot:mm_${i}`, orderBook));
-    for (let i = 0; i < 3; i++) this.bots.push(new WhaleBot(`bot:whale_${i}`, orderBook));
-  }
-
-  onTick(history) {
-    for (let i = 0; i < this.bots.length; i++) this.bots[i].onTick(history);
-  }
-}
 
 // ===================================================================
 // 6. UI COMPONENTS
@@ -686,7 +432,7 @@ function createToaster(container) {
     }
     while (container.children.length >= 4) container.firstChild.remove();
     const el = document.createElement('div');
-    el.className = `toast toast-${['success', 'warn', 'error'].includes(level) ? level : 'info'}`;
+    el.className = `toast toast-${['success', 'warn', 'error', 'news'].includes(level) ? level : 'info'}`;
     el.setAttribute('role', level === 'error' ? 'alert' : 'status');
     el.textContent = text;
     container.appendChild(el);
@@ -1616,9 +1362,14 @@ class PulseClock {
 }
 
 class GameLoop {
-  constructor(orderBook, { durationMinutes = GAME_DURATION_MINUTES, afterStep, onPulse, onFinish } = {}) {
+  constructor(orderBook, eventBus, { durationMinutes = GAME_DURATION_MINUTES, afterStep, onPulse, onFinish, onNews } = {}) {
     this.orderBook = orderBook;
-    this.botFleet = new BotFleet(orderBook);
+    this.fleet = new BotFleet(orderBook, eventBus, {
+      simSecsPerTick: SIM_SECS_PER_TICK,
+      openSecs: SESSION_OPEN_SECS,
+      closeSecs: SESSION_CLOSE_SECS,
+      onNews
+    });
     this.afterStep = afterStep;
     this.onPulse = onPulse;
     this.onFinish = onFinish;
@@ -1645,6 +1396,7 @@ class GameLoop {
     this.simulatedSeconds = SESSION_OPEN_SECS;
     this.finished = false;
     this.priceHistory = [this.makePoint()];
+    this.fleet.start(this.priceHistory); // 1,000 traders arrive and build the opening book
     this.startedAt = performance.now();
     this.running = true;
     this.clock.start();
@@ -1685,7 +1437,7 @@ class GameLoop {
     this.simulatedSeconds = SESSION_OPEN_SECS + this.ticksDone * SIM_SECS_PER_TICK;
     this.orderBook.currentTick = this.ticksDone;
     this.orderBook.expireOrders(this.ticksDone);
-    this.botFleet.onTick(this.priceHistory);
+    this.fleet.onTick({ tick: this.ticksDone, simSeconds: this.simulatedSeconds, history: this.priceHistory });
     if (this.afterStep) this.afterStep();
     const point = this.makePoint();
     this.priceHistory.push(point);
@@ -1731,11 +1483,18 @@ function initApp() {
     if (isAuthority()) brackets.onTrade(t);
   });
 
-  const gameLoop = new GameLoop(orderBook, {
+  // Market news (opening crowd, traders joining/leaving, US open) for every player
+  function announce(text) {
+    toast(text, 'news');
+    if (role === 'host') peerNetwork.broadcast({ type: 'NEWS', text });
+  }
+
+  const gameLoop = new GameLoop(orderBook, eventBus, {
     durationMinutes: GAME_DURATION_MINUTES,
     afterStep: () => brackets.evaluate(),
     onPulse: (points) => publishState(points),
-    onFinish: () => closeMarket()
+    onFinish: () => closeMarket(),
+    onNews: (text) => announce(text)
   });
 
   const lobbyPaths = new PathsBackground(document.getElementById('lobby-canvas'));
@@ -1766,7 +1525,9 @@ function initApp() {
   const roomCodeDisplay = $('room-code-display');
   const sessionProgress = $('session-progress');
 
+  const traderCount = $('trader-count');
   eventBus.on('TICK', (data) => {
+    if (traderCount && typeof data.traders === 'number') traderCount.innerText = data.traders.toLocaleString('en-US');
     if (sessionProgress && typeof data.progress === 'number') {
       sessionProgress.style.width = `${Math.min(100, data.progress * 100).toFixed(1)}%`;
     }
@@ -1805,13 +1566,6 @@ function initApp() {
     if (tradingScreen) tradingScreen.classList.remove('hidden');
   }
 
-  function seedInitialLiquidity() {
-    orderBook.processOrder({ playerId: 'bot:mm_0', side: 'BUY', price: 99.8, qty: 50, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'bot:mm_0', side: 'BUY', price: 99.5, qty: 100, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'bot:mm_0', side: 'SELL', price: 100.2, qty: 50, type: 'LIMIT' });
-    orderBook.processOrder({ playerId: 'bot:mm_0', side: 'SELL', price: 100.5, qty: 100, type: 'LIMIT' });
-  }
-
   // ---- Authority: state publishing ------------------------------------
 
   function collectHumanOrders() {
@@ -1837,8 +1591,9 @@ function initApp() {
       simTimeStr: formatSimTime(gameLoop.simulatedSeconds),
       progress: gameLoop.progress(),
       points,
-      bids: aggregateLevels(orderBook.bids, BOOK_LEVELS),
-      asks: aggregateLevels(orderBook.asks, BOOK_LEVELS),
+      bids: orderBook.levels('BUY', BOOK_LEVELS),
+      asks: orderBook.levels('SELL', BOOK_LEVELS),
+      traders: gameLoop.fleet.size + ledger.ids().length,
       playerOrders: collectHumanOrders(),
       brackets: brackets.byPlayer()
     };
@@ -1982,7 +1737,6 @@ function initApp() {
   // ---- Game start / end ---------------------------------------------------
 
   function beginMarket() {
-    seedInitialLiquidity();
     marketOpen = true;
     eventBus.emit('MARKET_STATE', { open: true });
     accountManager.broadcastState();
@@ -2083,6 +1837,9 @@ function initApp() {
         break;
       case 'NOTICE':
         if (data.playerId === currentUserId) toast(data.text, data.level);
+        break;
+      case 'NEWS':
+        toast(data.text, 'news');
         break;
       case 'GAME_OVER':
         endGame(data.results);
