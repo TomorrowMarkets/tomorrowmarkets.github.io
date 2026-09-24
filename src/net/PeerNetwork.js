@@ -14,9 +14,17 @@ export class PeerNetwork {
 
     this.peer.on('connection', (conn) => {
       this.connections.push(conn);
+
       conn.on('data', (data) => {
         if (this.eventBus) this.eventBus.emit('NET_DATA_RECEIVED', { conn, data });
       });
+
+      conn.on('close', () => {
+        this.connections = this.connections.filter(c => c !== conn);
+        if (this.eventBus) this.eventBus.emit('NET_CLIENT_DISCONNECTED', conn);
+      });
+
+      if (this.eventBus) this.eventBus.emit('NET_CLIENT_CONNECTED', conn);
     });
   }
 
@@ -26,6 +34,11 @@ export class PeerNetwork {
 
     this.peer.on('open', () => {
       this.hostConn = this.peer.connect('tm-room-' + roomCode);
+
+      this.hostConn.on('open', () => {
+        if (this.eventBus) this.eventBus.emit('NET_HOST_CONNECTED');
+      });
+
       this.hostConn.on('data', (data) => {
         if (this.eventBus) this.eventBus.emit('NET_DATA_RECEIVED', { data });
       });
