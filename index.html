@@ -244,6 +244,63 @@
     .metric > span.neg { color: var(--ask); }
     .metric-rule { border-top: 1px solid var(--line); margin: 2px 0; }
 
+    /* ---- Chart tools, legend and indicator editor -------------------- */
+    .chart-tool {
+      font-size: 12px; font-weight: 500; color: var(--muted); border-radius: 10px; padding: 7px 11px; cursor: pointer;
+      background: rgba(11, 29, 71, 0.055); transition: color .15s, background-color .15s;
+    }
+    .chart-tool:hover, .chart-tool[aria-expanded="true"] { color: var(--ink); background: rgba(11, 29, 71, 0.08); }
+    .chart-menu {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 19rem; padding: 6px;
+      background: rgba(255, 255, 255, 0.97); border-radius: 12px;
+      box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(11, 29, 71, 0.5);
+    }
+    .cm-group { font-size: 11px; color: var(--faint); padding: 6px 9px 2px; }
+    .chart-menu-item { display: block; width: 100%; text-align: left; padding: 6px 9px; border-radius: 8px; cursor: pointer; }
+    .chart-menu-item:hover:not(:disabled), .chart-menu-item:focus-visible { background: rgba(11, 29, 71, 0.05); outline: none; }
+    .chart-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+    .cm-name { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+    .cm-hint { display: block; font-size: 11px; line-height: 1.35; color: var(--muted); margin-top: 1px; }
+    .cm-check { position: relative; padding-right: 34px; }
+    .cm-check::after {
+      content: ""; position: absolute; right: 10px; top: 50%; width: 16px; height: 16px; margin-top: -8px; border-radius: 5px;
+      border: 1px solid var(--line-strong); background: #fff;
+    }
+    .cm-check[aria-checked="true"]::after {
+      border-color: var(--ink); background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+    }
+    .chart-menu-rule { border-top: 1px solid var(--line); margin: 5px 4px; }
+
+    .chart-legend {
+      position: absolute; left: 4px; top: 2px; z-index: 5; pointer-events: none; max-width: calc(100% - 72px);
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px; font-size: 11px;
+    }
+    .cl-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; border-radius: 6px; padding: 1px 2px; }
+    .cl-ohlc { gap: 9px; background: rgba(255, 255, 255, 0.72); padding: 1px 5px; font-variant-numeric: tabular-nums; }
+    .cl-ohlc .k, .cl-time { color: var(--faint); }
+    .cl-ohlc .v { font-weight: 600; }
+    .cl-name {
+      pointer-events: auto; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+      font-weight: 600; color: var(--ink); background: rgba(255, 255, 255, 0.78); border-radius: 5px; padding: 0 5px;
+    }
+    .cl-name::before { content: ""; width: 10px; height: 2.5px; border-radius: 2px; background: var(--c); }
+    .cl-name:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+    .cl-val { color: var(--c); font-weight: 600; font-variant-numeric: tabular-nums; background: rgba(255, 255, 255, 0.72); border-radius: 4px; padding: 0 3px; }
+    .cl-x {
+      pointer-events: auto; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px;
+      color: var(--faint); font-size: 13px; line-height: 1; cursor: pointer;
+    }
+    .cl-x:hover { color: var(--ask); background: var(--ask-tint); }
+    .chart-editor {
+      position: absolute; z-index: 25; width: 15rem; padding: 10px 12px 12px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.97); box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(11, 29, 71, 0.5);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .ce-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+    .ce-note { font-size: 11px; color: var(--muted); line-height: 1.4; margin: 0; }
+    .ce-field .label { margin-bottom: 3px; }
+    .ce-actions { display: flex; justify-content: space-between; margin-top: 2px; }
+
     .workspace {
       border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--faint); font-size: 12px;
       background: radial-gradient(rgba(176, 141, 60, 0.22) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(255, 255, 255, 0.45);
@@ -321,6 +378,7 @@
       <header class="px-8 md:px-14 pt-7 flex items-center gap-3 shrink-0">
         <img src="assets/logo.svg" alt="" class="w-8 h-8 rounded-[3px]" />
         <span class="wordmark text-[26px] leading-none">Tomorrow Markets</span>
+        <a href="leaderboard.html" class="btn btn-ghost ml-auto">Leaderboard</a>
       </header>
 
       <main class="flex-1 min-h-0 overflow-y-auto px-8 md:px-14 py-8 grid lg:grid-cols-[minmax(0,1fr)_24rem] items-center gap-10">
@@ -376,6 +434,9 @@
               Waiting for the host to open the market…
             </div>
           </div>
+
+          <!-- Fun facts while players join (src/ui/lobby-facts.js) -->
+          <div id="lobby-facts"></div>
         </div>
       </main>
 
@@ -418,21 +479,32 @@
 
       <!-- Price Action Chart -->
       <section class="area-chart glass p-3.5 flex flex-col">
-        <div class="flex justify-between items-center mb-2 shrink-0">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2 shrink-0">
           <div class="flex items-baseline gap-2.5">
             <span class="panel-title">Price action</span>
             <span id="mid-price-display" class="price-big num">$100.00</span>
           </div>
-          <div class="seg flex">
-            <button data-tf="1M" class="tf-btn seg-btn">1M</button>
-            <button data-tf="5M" class="tf-btn seg-btn is-active">5M</button>
-            <button data-tf="10M" class="tf-btn seg-btn">10M</button>
-            <button data-tf="1H" class="tf-btn seg-btn">1H</button>
-            <button data-tf="ALL" class="tf-btn seg-btn">All</button>
+          <div class="flex items-center gap-2">
+            <div class="seg flex" role="group" aria-label="Chart type">
+              <button type="button" data-chart-type="line" class="seg-btn is-active">Line</button>
+              <button type="button" data-chart-type="candles" class="seg-btn">Candles</button>
+            </div>
+            <div class="relative">
+              <button type="button" id="chart-ind-btn" class="chart-tool" aria-haspopup="menu" aria-expanded="false" aria-controls="chart-ind-menu">Indicators</button>
+              <div id="chart-ind-menu" class="chart-menu hidden" role="menu" aria-label="Add an indicator"></div>
+            </div>
+            <div class="seg flex" role="group" aria-label="Time range">
+              <button type="button" data-tf="1M" class="tf-btn seg-btn">1M</button>
+              <button type="button" data-tf="5M" class="tf-btn seg-btn is-active">5M</button>
+              <button type="button" data-tf="10M" class="tf-btn seg-btn">10M</button>
+              <button type="button" data-tf="1H" class="tf-btn seg-btn">1H</button>
+              <button type="button" data-tf="ALL" class="tf-btn seg-btn">All</button>
+            </div>
           </div>
         </div>
-        <div class="flex-1 relative w-full min-h-0">
-          <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full"></canvas>
+        <div id="chart-stage" class="flex-1 relative w-full min-h-0">
+          <canvas id="priceChartCanvas" class="absolute inset-0 w-full h-full" role="img" aria-label="Price chart"></canvas>
+          <div id="chart-legend" class="chart-legend"></div>
         </div>
       </section>
 
@@ -573,6 +645,8 @@
         </div>
         <p id="go-note" class="hidden text-[11px] t-faint mt-3"></p>
       </div>
+
+      <p id="go-leaderboard" class="hidden text-xs t-muted text-center" aria-live="polite"></p>
 
       <div id="go-rankings" class="hidden">
         <div class="flex justify-between items-center mb-2">
