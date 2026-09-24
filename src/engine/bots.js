@@ -24,8 +24,12 @@ export const TUNING = {
   makerSize: [6, 15],        // shares per level unit (levels are 1×, 2×, 3×)
   makerHalfSpread: [0.0001, 0.0003], // base half-spread
   makerMaxHalfSpread: 0.0008,        // half-spread never wider than this
-  makerMaxInventory: [300, 800],     // inventory where quotes are fully skewed
-  makerSkew: 0.5,                    // skew at max inventory, in half-spreads
+  makerMaxInventory: [300, 800],     // hard inventory limit (stops quoting that side)
+  valueVol: 0.0003,                  // per-step volatility of the hidden fair value ("news"):
+                                     //   the main dial for how much the price moves
+  valuePull: 0.02,                   // fair value drifts this much toward where the market trades
+  makerValueWeight: [0.8, 1.0],      // how closely each maker centres its quotes on fair value
+  valueEventDrift: 0.0002,           // per-step fair-value drift at full event strength (US open)
   trend2Activity: [0.01, 0.03]       // how often trend bot 2 checks the book
 };
 
@@ -191,9 +195,9 @@ export class NoiseBot extends BaseBot {
 }
 
 // ===================================================================
-// 2. MARKET MAKER: quotes both sides on 3 levels around a reservation
-// price. Spread scales with volatility; quotes lean against inventory so
-// the maker drifts back toward flat.
+// 2. MARKET MAKER: quotes both sides on 3 levels around its estimate of
+// fair value (the market price blended with a hidden "news" random walk).
+// Spread widens a little when the market is jumpy.
 // ===================================================================
 export class MarketMakerBot extends BaseBot {
   static TYPE = 'marketMaker';
@@ -204,29 +208,39 @@ export class MarketMakerBot extends BaseBot {
     this.size = randInt(...TUNING.makerSize);
     this.baseHalf = rand(...TUNING.makerHalfSpread);
     this.maxInventory = randInt(...TUNING.makerMaxInventory);
+    this.valueWeight = rand(...TUNING.makerValueWeight);
   }
 
   onTick(m) {
-    this.cancelAll(); // re-quote every step so prices absorb news at once
+    // Read the market as it stands (including our own quotes) before replacing
+    // them. Reading it after cancelling would re-centre on older orders further
+    // out and pull the price back to where it was.
+    const mid = this.book.getMidPrice();
+    this.cancelAll(); // re-quote every step
 
+    // No inventory leaning: shifting quote prices or sizes against inventory
+    // (or dumping it on the other makers) turns every imbalance into a slow,
+    // self-feeding trend. Makers just stop quoting a side at their limit.
 
     const bestBid = this.book.bestBid();
     const bestAsk = this.book.bestAsk();
-    const mid = bestBid != null && bestAsk != null ? (bestBid + bestAsk) / 2 : this.book.lastPrice;
     // Spread: a base width plus a little extra when the market is jumpy, capped
     const half = clamp(this.baseHalf * mid + 0.5 * m.tickSigma, 0.01, TUNING.makerMaxHalfSpread * mid);
-    const inv = clamp(this.shares / this.maxInventory, -1.5, 1.5);
-    const reservation = mid - inv * half * TUNING.makerSkew + this.tilt * half * 4;
+    // Quotes centre between the market and the maker's view of fair value, so
+    // prices follow news (a random walk) instead of their own momentum. Makers
+    // that arrive with the US open lean with their cohort while the event lasts.
+    const centre = mid + this.valueWeight * (m.value - mid) + this.tilt * half * 4;
+    const full = Math.abs(this.shares) >= this.maxInventory;
 
     for (let i = 0; i < this.levels; i++) {
       const off = half * (1 + i);
-      let bid = floor2(reservation - off);
-      let ask = ceil2(reservation + off);
+      let bid = floor2(centre - off);
+      let ask = ceil2(centre + off);
       if (bestAsk != null) bid = Math.min(bid, round2(bestAsk - 0.01));
       if (bestBid != null) ask = Math.max(ask, round2(bestBid + 0.01));
       const q = this.size * (i + 1);
-      if (inv < 1) this.limit('BUY', bid, q * clamp(1 - inv, 0.25, 1.5));
-      if (inv > -1) this.limit('SELL', ask, q * clamp(1 + inv, 0.25, 1.5));
+      if (!(full && this.shares > 0)) this.limit('BUY', bid, q);
+      if (!(full && this.shares < 0)) this.limit('SELL', ask, q);
     }
   }
 }
