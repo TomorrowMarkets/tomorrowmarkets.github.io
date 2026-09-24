@@ -9,12 +9,17 @@
 //   17:00–18:00  the opening crowd comes back for the close
 
 import { BOT_TYPES, TUNING, rand, randInt } from './bots.js';
+import { random, gauss } from './random.js';
 
 // ---- Tuning ----------------------------------------------------------------
-// Base population (1,000 agents): 90% noise, 10% spread over the other 14 types.
-// Hourly joiners are drawn with the same weights, so the mix stays 90/10.
+// Base population (1,000 agents): 90% noise traders of four kinds, 10% spread
+// over the other 14 types. Hourly joiners are drawn with the same weights, so
+// the mix stays 90/10.
 export const BASE_MIX = {
-  noise: 900,        // 90% noise traders
+  noise: 700,        // 90% noise traders of four kinds:
+  randomLimit: 100,  //   random limit givers
+  randomBuyer: 60,   //   everyday investors who buy at random
+  reverter: 40,      //   aggressive reverters (push / revert / hold after a run)
   marketMaker: 30,   // the other 10%: market makers get the biggest share,
   whale: 3,          // since the whole book depends on them
   buyer: 3,
@@ -36,15 +41,21 @@ const US_OPEN_SIZE = 200;
 const US_OPEN_FADE_MINUTES = 60; // the push decays with this time constant
 const US_OPEN_SMALL = [0.18, 0.28]; // lean of a small event (0 = none, 1 = one-sided)
 const US_OPEN_BIG = [0.34, 0.46];   // lean of a big event
+const Z_WINDOW = 480;           // z-scores compare against the last 2 hours of steps
+const Z_MAX_K = 30;             // longest move measured directly (longer ones are scaled)
+const Z_FLOOR = 0.00005;        // 0.5 bp: z-scores never divide by less than this
+const HEAT_FAST_MINUTES = 3;    // "recent" volatility for the heat reading…
+const HEAT_SLOW_MINUTES = 60;   // …against this longer baseline
+const HEAT_RANGE = [0.5, 3];    // heat is kept inside this range
 const TREND_TYPES = ['trend1', 'trend2', 'trend3'];
 const MR_TYPES = ['mr1', 'mr2', 'mr3'];
 
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const pick = (arr) => arr[Math.floor(random() * arr.length)];
 
 function weightedPick(mix) {
   const entries = Object.entries(mix);
   const total = entries.reduce((s, [, w]) => s + w, 0);
-  let r = Math.random() * total;
+  let r = random() * total;
   for (const [type, w] of entries) {
     r -= w;
     if (r < 0) return type;
@@ -54,7 +65,7 @@ function weightedPick(mix) {
 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -74,6 +85,7 @@ export class MarketState {
     this.mid = book.getMidPrice();
     this.volRank = null; // 0..1, set by the fleet once there is enough history
     this.value = this.mid; // hidden fair value, set by the fleet
+    this.heat = 1;       // attention: recent volatility vs the last hour, set by the fleet
     this.cache = new Map();
   }
 
@@ -136,6 +148,48 @@ export class MarketState {
     });
   }
 
+  // z-scores: how unusual a reading is against the same reading over the
+  // last Z_WINDOW steps (±2 is unusual, ±3 is rare). Thresholds in these
+  // units adapt to calm and busy days alike, where a fixed 0.5% would almost
+  // never trigger on a quiet day and trigger constantly on a wild one.
+
+  // Typical size of a k-step return lately (root mean square). Beyond
+  // Z_MAX_K steps it is scaled up from Z_MAX_K like a random walk.
+  kStd(k) {
+    return this.memo(`ks${k}`, () => {
+      if (k > Z_MAX_K) return this.kStd(Z_MAX_K) * Math.sqrt(k / Z_MAX_K);
+      const h = this.history;
+      const n = Math.min(Z_WINDOW, h.length - 1 - k);
+      let s2 = 0;
+      for (let i = h.length - n; i < h.length; i++) s2 += (h[i].price / h[i - k].price - 1) ** 2;
+      const floor = Z_FLOOR * Math.sqrt(k);
+      return n >= 20 ? Math.max(floor, Math.sqrt(s2 / n)) : Math.max(floor, TUNING.valueVol * Math.sqrt(k));
+    });
+  }
+
+  // The move over the last k steps as a z-score
+  moveZ(k) {
+    return this.memo(`mz${k}`, () => (this.length > k ? this.ret(k) / this.kStd(k) : 0));
+  }
+
+  // The gap between the price and its n-step mean as a z-score
+  devZ(n) {
+    return this.memo(`dz${n}`, () => {
+      const h = this.history;
+      if (h.length < n + 20) return 0;
+      const start = Math.max(n - 1, h.length - Z_WINDOW);
+      let sum = 0;
+      for (let i = start - n + 1; i <= start; i++) sum += h[i].price;
+      let s2 = 0;
+      for (let i = start; i < h.length; i++) {
+        if (i > start) sum += h[i].price - h[i - n].price;
+        s2 += (h[i].price / (sum / n) - 1) ** 2;
+      }
+      const rms = Math.max(Z_FLOOR, Math.sqrt(s2 / (h.length - start)));
+      return (this.mid / this.sma(n) - 1) / rms;
+    });
+  }
+
   // (ups - downs) / n over the last n one-step returns: +1 all up, -1 all down
   upDownScore(n) {
     return this.memo(`ud${n}`, () => {
@@ -164,6 +218,11 @@ export class MarketState {
   // Typical one-step price change ($): at least one cent, at most 0.3% of the price
   get tickSigma() {
     return this.memo('tickSigma', () => Math.min(0.003 * this.mid, Math.max(0.01, this.retStd(30) * this.mid)));
+  }
+
+  // Participation multiplier for attention-driven traders
+  get attention() {
+    return this.memo('attention', () => this.heat ** TUNING.heatPower);
   }
 
   get bidLevels() { return this.memo('bidLv', () => this.book.levels('BUY', 10)); }
@@ -203,6 +262,8 @@ export class BotFleet {
     this.volSeries = [];    // recent-volatility readings, for percentile ranks
     this.value = null;      // hidden fair value: a random walk ("news") market makers lean on
     this.eventBias = null;  // the US open is news too: it pushes fair value while it lasts
+    this.fastVol = this.slowVol = 0.8 * TUNING.valueVol; // mean |1-step return|, for heat
+    this.newsLog = 0;       // log news intensity (see newsIntensity)
 
     // Route fills to the bots involved so they know their positions
     eventBus.on('TRADE', (t) => {
@@ -279,11 +340,7 @@ export class BotFleet {
       if (bot.type === 'marketMaker') bot.onTick(m);
     }
     for (const bot of this.active.values()) {
-      if (bot.type === 'noise' && Math.random() < 0.5) {
-        const side = Math.random() < 0.5 ? 'BUY' : 'SELL';
-        const k = rand(1, 3) * m.sigma;
-        bot.limit(side, side === 'BUY' ? m.mid - k : m.mid + k, randInt(1, 50), randInt(...TUNING.noiseTtl));
-      }
+      if (bot.openingOrder && random() < 0.5) bot.openingOrder(m);
     }
   }
 
@@ -296,11 +353,20 @@ export class BotFleet {
     // Fair value takes a random step (news) and drifts a little toward where
     // the market actually trades, so big trades leave a lasting mark.
     if (this.value == null) this.value = m.mid;
-    const z = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
     const eventDrift = this.eventBias ? this.eventBias() * TUNING.valueEventDrift : 0;
-    this.value *= Math.exp(TUNING.valueVol * z + eventDrift);
+    this.value *= Math.exp(TUNING.valueVol * this.newsIntensity() * gauss() + eventDrift);
     this.value += TUNING.valuePull * (m.mid - this.value);
     m.value = this.value;
+    // Attention ("heat"): how busy the last few minutes were against the last
+    // hour. A moving market draws people in, so noise-type traders trade more
+    // when it's hot and volume rises and falls with volatility, as it does
+    // in real markets.
+    if (history.length > 1) {
+      const r = Math.abs(Math.log(history[history.length - 1].price / history[history.length - 2].price));
+      this.fastVol += (r - this.fastVol) / this.ticksFor(HEAT_FAST_MINUTES);
+      this.slowVol += (r - this.slowVol) / this.ticksFor(HEAT_SLOW_MINUTES);
+    }
+    m.heat = Math.min(HEAT_RANGE[1], Math.max(HEAT_RANGE[0], this.fastVol / this.slowVol));
     // Where does current volatility rank against the last ~hour of readings?
     if (history.length > 21) {
       const v = m.retStd(20);
@@ -318,6 +384,17 @@ export class BotFleet {
     }
     shuffle(this.roster); // nobody gets to act first every tick
     for (let i = 0; i < this.roster.length; i++) this.roster[i].tick(m);
+  }
+
+  // News doesn't arrive at an even pace: there are quiet stretches and busy
+  // ones, each lasting roughly TUNING.newsRegimeMinutes. Returns a multiplier
+  // for the size of this step's news (1 on average, at most newsMaxScale).
+  // This is what gives the price fat tails and volatility that clusters.
+  newsIntensity() {
+    const v = TUNING.newsVolOfVol;
+    const tau = this.ticksFor(TUNING.newsRegimeMinutes);
+    this.newsLog += -this.newsLog / tau + v * Math.sqrt(2 / tau) * gauss();
+    return Math.min(TUNING.newsMaxScale, Math.exp(this.newsLog - (v * v) / 2));
   }
 
   // ---- scheduled events ---------------------------------------------------
@@ -346,7 +423,7 @@ export class BotFleet {
 
   hourlyChurn() {
     const n = randInt(10, 100);
-    if (Math.random() < 0.5) {
+    if (random() < 0.5) {
       for (let i = 0; i < n; i++) this.spawn(weightedPick(BASE_MIX), { cohort: 'churn' });
       this.news(`${n} new traders joined the market.`);
       return;
@@ -367,8 +444,8 @@ export class BotFleet {
   }
 
   usOpen() {
-    const direction = Math.random() < 0.5 ? 1 : -1;
-    const big = Math.random() < 0.5;
+    const direction = random() < 0.5 ? 1 : -1;
+    const big = random() < 0.5;
     const strength = big ? rand(US_OPEN_BIG[0], US_OPEN_BIG[1]) : rand(US_OPEN_SMALL[0], US_OPEN_SMALL[1]);
     const start = this.tick;
     const fade = this.ticksFor(US_OPEN_FADE_MINUTES);

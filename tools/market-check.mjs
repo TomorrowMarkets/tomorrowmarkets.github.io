@@ -1,3 +1,53 @@
+// tools/market-check.mjs
+// Runs whole days of the bot market without the UI and prints the numbers
+// that decide whether it behaves like a real stock: fat tails, volatility
+// clustering, no free momentum, a book that doesn't collapse, and who is
+// making or losing money. Use it after changing TUNING or the bot mix.
+//
+//   node tools/market-check.mjs                       20 days
+//   node tools/market-check.mjs --days 50 --seed abc  other days
+//   node tools/market-check.mjs --set newsVolOfVol=0  try a TUNING value
+//   node tools/market-check.mjs --mix reverter=0      try a different mix
+//
+// Needs Node 22+ (it loads the engine's ES modules directly).
+
+import { simulateDay } from '../src/engine/simulate.js';
+import { TUNING } from '../src/engine/bots.js';
+import { BASE_MIX } from '../src/engine/BotFleet.js';
+
+const args = process.argv.slice(2);
+const opt = (name, fallback) => {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : fallback;
+};
+const DAYS = Number(opt('days', 20));
+const SEED = opt('seed', 'check');
+for (let i = 0; i < args.length; i++) {
+  if (args[i] !== '--set' && args[i] !== '--mix') continue;
+  const [k, v] = args[i + 1].split('=');
+  const target = args[i] === '--set' ? TUNING : BASE_MIX;
+  if (!(k in target)) throw new Error(`unknown ${args[i] === '--set' ? 'TUNING key' : 'bot type'}: ${k}`);
+  target[k] = JSON.parse(v);
+}
+
+const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+const sd = (a) => Math.sqrt(a.reduce((s, x) => s + (x - mean(a)) ** 2, 0) / (a.length - 1));
+const kurtosis = (a) => {
+  const m = mean(a);
+  const s = sd(a);
+  return a.reduce((t, x) => t + ((x - m) / s) ** 4, 0) / a.length - 3;
+};
+const autocorr = (a, k) => {
+  const m = mean(a);
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < a.length; i++) {
+    den += (a[i] - m) ** 2;
+    if (i >= k) num += (a[i] - m) * (a[i - k] - m);
+  }
+  return num / den;
+};
+const typeOf = (id) => (/^bot:([A-Za-z0-9]+)_/.exec(id) || [])[1] || id;
 
 const days = [];
 const byType = {};
