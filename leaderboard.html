@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Leaderboard | Tomorrow Markets</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+
+  <!-- External Libraries -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts: same pairing as the game itself -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..600;1,8..60,300..500&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'Segoe UI', 'sans-serif'],
+            serif: ['"Source Serif 4"', 'Georgia', 'serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Same theme tokens as index.html, so this page reads as part of the site. */
+    :root {
+      --paper: #F6F8FB;
+      --ink: #0B1D47;
+      --ink-soft: #2A3B63;
+      --muted: #5A6B88;
+      --faint: #8C99B0;
+      --gold: #B08D3C;
+      --gold-ink: #8A6A1F;
+      --gold-tint: rgba(176, 141, 60, 0.16);
+      --bid: #0F8A5F;
+      --ask: #C23B32;
+      --line: rgba(11, 29, 71, 0.08);
+      --line-strong: rgba(11, 29, 71, 0.15);
+    }
+
+    html, body { min-height: 100%; }
+    body {
+      color: var(--ink);
+      font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(60rem 40rem at 0% 0%, rgba(21, 96, 130, 0.09), transparent 62%),
+        radial-gradient(52rem 36rem at 100% 100%, rgba(176, 141, 60, 0.13), transparent 62%),
+        radial-gradient(rgba(11, 29, 71, 0.075) 1px, transparent 1.3px) 0 0 / 18px 18px,
+        var(--paper);
+    }
+    .serif { font-family: 'Source Serif 4', Georgia, serif; }
+    .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'cv11' 1; }
+    a { color: inherit; }
+    .t-ink { color: var(--ink); }
+    .t-muted { color: var(--muted); }
+    .t-faint { color: var(--faint); }
+    .pos { color: var(--bid); }
+    .neg { color: var(--ask); }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(11, 29, 71, 0.16); border-radius: 3px; }
+    :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    .wordmark { font-family: 'Source Serif 4', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+      font-weight: 600; font-size: 13px; border-radius: 10px; padding: 9px 14px;
+      transition: background-color .15s, border-color .15s, color .15s, transform .05s; cursor: pointer;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-ghost { background: rgba(255, 255, 255, 0.7); color: var(--ink); border: 1px solid var(--line-strong); }
+    .btn-ghost:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
+
+    .lobby { background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%); }
+    .lobby-dots {
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(rgba(11, 29, 71, 0.11) 1px, transparent 1.3px) 0 0 / 22px 22px;
+      -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
+      mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
+    }
+    .lobby-card {
+      background: rgba(255, 255, 255, 0.58);
+      -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(11, 29, 71, 0.45);
+      border-radius: 18px;
+    }
+
+    .seg { background: rgba(11, 29, 71, 0.055); border-radius: 10px; padding: 3px; gap: 2px; display: inline-grid; }
+    .seg-btn {
+      font-size: 12.5px; font-weight: 500; color: var(--muted); border-radius: 7px; padding: 6px 14px; cursor: pointer;
+      transition: background-color .15s, color .15s; border: none; background: transparent;
+    }
+    .seg-btn:hover { color: var(--ink); }
+    .seg-btn.is-active { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 29, 71, 0.12), 0 0 0 1px var(--line); }
+
+    .chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px; letter-spacing: 0.02em; }
+    .chip-gold { color: var(--gold-ink); background: var(--gold-tint); }
+    .chip-neutral { color: var(--muted); background: rgba(11, 29, 71, 0.06); font-weight: 500; }
+
+    /* ---- Board table -------------------------------------------------- */
+    .board-head, .board-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 116px 76px 64px 84px;
+      align-items: center;
+      column-gap: 10px;
+    }
+    .board-head {
+      font-size: 11px; color: var(--faint); padding: 0 12px 8px; margin-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+    }
+    .board-head > span:not(:first-child):not(:nth-child(2)) { text-align: right; }
+    .board-row {
+      padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.7); font-size: 12.5px;
+    }
+    .board-row.is-me { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-tint); background: rgba(255, 255, 255, 0.92); }
+    .board-rank { font-weight: 700; color: var(--ink); }
+    .board-handle { font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .board-handle > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .board-pnl, .board-mode, .board-dur, .board-when { text-align: right; }
+    .board-pnl { font-weight: 700; }
+    .board-mode, .board-dur, .board-when { color: var(--muted); font-size: 11.5px; }
+    .board-status { font-size: 12.5px; color: var(--faint); text-align: center; padding: 28px 0; }
+
+    @media (max-width: 640px) {
+      .board-head, .board-row { grid-template-columns: 30px 1fr 96px; }
+      .board-head span:nth-child(4), .board-head span:nth-child(5), .board-head span:nth-child(6),
+      .board-mode, .board-dur, .board-when { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <div class="lobby flex-1 relative flex flex-col overflow-hidden">
+    <div class="lobby-dots" aria-hidden="true"></div>
+
+    <div class="relative z-10 flex-1 flex flex-col">
+      <header class="px-6 md:px-14 pt-7 flex items-center gap-3 shrink-0">
+        <img src="assets/logo.svg" alt="" class="w-8 h-8 rounded-[3px]" />
+        <span class="wordmark text-[22px] md:text-[26px] leading-none">Tomorrow Markets</span>
+        <a href="index.html" class="btn btn-ghost ml-auto">Back to game</a>
+      </header>
+
+      <main class="flex-1 px-6 md:px-14 py-8 md:py-10 flex flex-col items-center">
+        <div class="w-full max-w-2xl">
+
+          <div class="mb-6">
+            <h1 class="serif text-[32px] md:text-[40px] font-normal leading-tight t-ink">Leaderboard</h1>
+            <p class="text-sm t-muted mt-1.5">Each trader's best run, ranked by total PnL.</p>
+          </div>
+
+          <div class="seg grid grid-cols-2 mb-5 w-full max-w-xs">
+            <button class="seg-btn is-active" data-category="discretionary">Discretionary</button>
+            <button class="seg-btn" data-category="algorithmic">Algorithmic</button>
+          </div>
+
+          <div class="lobby-card p-4 md:p-5">
+            <div class="board-head">
+              <span>#</span><span>Trader</span><span>PnL</span><span>Mode</span><span>Length</span><span>When</span>
+            </div>
+            <p id="board-status" class="board-status hidden"></p>
+            <div id="board-list" class="space-y-1.5 max-h-[58vh] overflow-y-auto pr-1"></div>
+          </div>
+
+          <p class="text-xs t-faint text-center mt-5">Top 1,000 per category. Only your best run in each category counts.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script type="module">
+    import { fetchLeaderboard, CATEGORIES } from './src/services/leaderboard-api.js';
+
+    const tabs = document.querySelectorAll('.seg-btn[data-category]');
+    const listEl = document.getElementById('board-list');
+    const statusEl = document.getElementById('board-status');
+
+    const initial = CATEGORIES.includes(location.hash.slice(1)) ? location.hash.slice(1) : CATEGORIES[0];
+    const state = { category: initial };
+
+    function setActiveTab() {
+      tabs.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.category === state.category));
+    }
+
+    function fmtMoney(n) {
+      const sign = n < 0 ? '-' : '+';
+      return `${sign}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function fmtWhen(iso) {
+      const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.round(hrs / 24)}d ago`;
+    }
+
+    function ordinal(n) {
+      const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    }
+
+    function showStatus(text) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle('hidden', !text);
+    }
+
+    async function load() {
+      setActiveTab();
+      listEl.innerHTML = '';
+      showStatus('Loading leaderboard…');
+      try {
+        const rows = await fetchLeaderboard(state.category);
+        if (!rows.length) {
+          showStatus('No runs on the board yet — be the first.');
+          return;
+        }
+        showStatus('');
+        listEl.innerHTML = rows.map((row) => `
+          <div class="board-row ${row.is_you ? 'is-me' : ''}">
+            <span class="board-rank num">${ordinal(row.rank)}</span>
+            <span class="board-handle">
+              <span>${escapeHtml(row.handle)}</span>
+              ${row.is_you ? '<span class="chip chip-gold">You</span>' : ''}
+            </span>
+            <span class="board-pnl num ${row.pnl >= 0 ? 'pos' : 'neg'}">${fmtMoney(row.pnl)}</span>
+            <span class="board-mode chip chip-neutral">${row.mode === 'multi' ? 'Multi' : 'Single'}</span>
+            <span class="board-dur num">${row.duration_min}m</span>
+            <span class="board-when">${fmtWhen(row.achieved_at)}</span>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error('[leaderboard]', err);
+        showStatus("Couldn't load the leaderboard right now. Try again shortly.");
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    tabs.forEach((btn) => btn.addEventListener('click', () => {
+      if (btn.dataset.category === state.category) return;
+      state.category = btn.dataset.category;
+      history.replaceState(null, '', `#${state.category}`);
+      load();
+    }));
+
+    load();
+  </script>
+</body>
+</html>
