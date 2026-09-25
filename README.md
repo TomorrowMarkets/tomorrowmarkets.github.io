@@ -24,9 +24,9 @@ Features.
 
 
 ## Leaderboard keys
-https://jpsdqawilipmsineoufz.supabase.co\
+https://jpsdqawilipmsineoufz.supabase.co \
 sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ
 
 ## Bot keys
-https://iwmqwqguisduqwnsdbyj.supabase.co\
+https://iwmqwqguisduqwnsdbyj.supabase.co \
 sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW
