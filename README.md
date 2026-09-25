@@ -16,11 +16,20 @@ Features.
 ~~12. Lobby UI, leaderboard, beginning of setup for multiple games.~~ \
 ~~13. Features, indicators, basic signals~~ \
 ~~14. RL bot~~ \
-15. Python, R, pinescript, TMRWUSERLANGUAGE \
-16. Different game modes \
+15. Discretionary vs Algorithmic modes for single and multiplayer \
+16. Python, R, pinescript, TMRWUSERLANGUAGE \
+17. Different game modes \
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
 --- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
 --- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) 
+18. Correct bot behaviours again, again, again. 
+--- A. US bot entry sets a complete drift, which can be exploited.
+--- B. Last hour behaviour is essentially aggressively mean reverting
+--- C. open, close, high, low matches should be able to happen, we shouldn't keep seeing "high low, outside of candle"
+--- D. volatility should cycle, not remain high at all costs.
+--- E. low participation should be a phenomenon.
+--- F. 
+--- G.
 
 
 ## Leaderboard keys
