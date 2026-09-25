@@ -6,6 +6,11 @@ export class PeerNetwork {
     this.connections = [];
     this.hostConn = null;
     this.isHost = false;
+    // Closing the tab closes our connections properly, so the room hears
+    // about it straight away instead of waiting for a timeout.
+    window.addEventListener('pagehide', () => {
+      if (this.peer && !this.peer.destroyed) this.peer.destroy();
+    });
   }
 
   initHost(roomCode) {
@@ -19,9 +24,19 @@ export class PeerNetwork {
         if (this.eventBus) this.eventBus.emit('NET_DATA_RECEIVED', { conn, data });
       });
 
-      conn.on('close', () => {
+      // 'close' doesn't always fire when a player's tab simply disappears,
+      // so a failed or disconnected WebRTC link counts as leaving too.
+      let gone = false;
+      const leave = () => {
+        if (gone) return;
+        gone = true;
         this.connections = this.connections.filter(c => c !== conn);
         if (this.eventBus) this.eventBus.emit('NET_CLIENT_DISCONNECTED', conn);
+      };
+      conn.on('close', leave);
+      conn.on('error', leave);
+      conn.on('iceStateChanged', (state) => {
+        if (state === 'failed' || state === 'closed' || state === 'disconnected') leave();
       });
 
       if (this.eventBus) this.eventBus.emit('NET_CLIENT_CONNECTED', conn);
