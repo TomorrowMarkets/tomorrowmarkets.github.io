@@ -10,7 +10,7 @@
 
 export const AI_SYNC = {
   supabaseUrl: 'https://iwmqwqguisduqwnsdbyj.supabase.co',
-  publishableKey: '', // paste the full sb_publishable_... key here
+  publishableKey: 'sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW', // paste the full sb_publishable_... key here
   table: 'ai_experience'
 };
 
