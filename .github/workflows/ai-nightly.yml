@@ -1,0 +1,55 @@
+# Tomorrow AI: nightly long-term learning.
+# Folds the day's real games into the AI's brain, practises further, and
+# publishes the new brain to the site only if it tests at least as well.
+#
+# Setup: Settings -> Secrets and variables -> Actions -> New repository secret
+#   SUPABASE_URL          https://<project>.supabase.co
+#   SUPABASE_SERVICE_KEY  the service_role key (never put this in the site code)
+# Without the secrets it still runs, practising against the simulator only.
+
+name: Tomorrow AI nightly learning
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # every night at 03:00 UTC
+  workflow_dispatch:       # "Run workflow" button for a manual session
+    inputs:
+      practice_minutes:
+        description: Minutes of simulated practice
+        default: '120'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tomorrow-ai
+  cancel-in-progress: false
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Learn from today's games and practise
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node tools/nightly-ai.mjs --practice-minutes ${{ github.event.inputs.practice_minutes || '120' }}
+
+      - name: Publish the new brain
+        run: |
+          if git diff --quiet -- assets/ai-brain.json; then
+            echo "No new brain tonight."
+            exit 0
+          fi
+          git config user.name "tomorrow-ai"
+          git config user.email "tomorrow-ai@users.noreply.github.com"
+          git add assets/ai-brain.json
+          git commit -m "Tomorrow AI: nightly learning"
+          git push
