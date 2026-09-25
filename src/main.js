@@ -5,6 +5,9 @@ import { TickAccumulator } from './engine/bars.js';
 import { PriceChart } from './ui/PriceChart.js';
 import { mountLobbyFacts } from './ui/lobby-facts.js';
 import { createRunTracker, isConfigured as leaderboardLive } from './services/leaderboard-api.js';
+import { BranchingDQN } from './engine/ai/brain.js';
+import { createAgent, AI_ID, AI_NAME } from './engine/ai/RLTrader.js';
+import { uploadExperience, syncEnabled } from './engine/ai/sync.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -989,7 +992,7 @@ class GameOverUI {
           <div class="row-card row-card-roomy${isMe ? ' is-me' : ''} flex items-center justify-between text-xs num">
             <span class="flex items-center gap-3 min-w-0">
               <span class="w-5 ${i === 0 ? 't-gold font-bold' : 't-faint'}">${i + 1}</span>
-              <span class="t-ink font-medium truncate">${escapeHtml(s.id)}${isMe ? ' <span class="t-faint font-normal">(You)</span>' : ''}</span>
+              <span class="t-ink font-medium truncate">${escapeHtml(s.name || s.id)}${isMe ? ' <span class="t-faint font-normal">(You)</span>' : ''}${s.isAI ? ' <span class="chip chip-gold">AI</span>' : ''}</span>
             </span>
             <span class="flex items-center gap-3 shrink-0">
               <span class="font-semibold ${tone(s.total)}">${fmtSigned(s.total)}</span>
@@ -1311,6 +1314,7 @@ class GameLoop {
     if (this.ticksDone >= this.totalTicks) {
       this.finished = true;
       this.stop();
+      this.fleet.endDay(this.priceHistory); // Tomorrow AI's final reward for the day
       if (this.onFinish) this.onFinish();
     }
   }
@@ -1335,6 +1339,86 @@ class GameLoop {
     this.lastClose = close;
     return { ...bar, simTimeStr: formatSimTime(this.simulatedSeconds), simSecs: this.simulatedSeconds };
   }
+}
+
+// ===================================================================
+// TOMORROW AI: one learning trader per game.
+//   - Starts from the published long-term brain (assets/ai-brain.json).
+//   - Learns live during the game (gently, so one game refines rather than
+//     overwrites what it knows) and caches that refinement in this browser.
+//   - At the closing bell uploads the game's experience to the inbox; the
+//     nightly trainer (tools/nightly-ai.mjs) folds every game into the next
+//     published generation. See src/engine/ai/sync.js to switch uploads on.
+// ===================================================================
+const AI_STORAGE_KEY = 'tomorrowMarkets.aiBrain';
+const AI_LIVE_SETTINGS = { bufferSize: 4000, warmup: 256, batch: 32, learnEvery: 4, lr: 5e-5 };
+
+async function loadAIBrain() {
+  let shipped = null;
+  let local = null;
+  try {
+    const res = await fetch('assets/ai-brain.json', { cache: 'no-cache' });
+    if (res.ok) shipped = await res.json();
+  } catch (err) { /* no published brain yet */ }
+  try {
+    const raw = localStorage.getItem(AI_STORAGE_KEY);
+    if (raw) local = JSON.parse(raw);
+  } catch (err) { /* storage unavailable */ }
+  // A newer published generation always wins; this browser's refined copy is
+  // only used while the published brain is still the same generation.
+  let best = shipped;
+  if (local && (!shipped || (local.generation || 0) > (shipped.generation || 0) ||
+      ((local.generation || 0) === (shipped.generation || 0) && local.episodes > shipped.episodes))) best = local;
+  try {
+    const agent = best ? BranchingDQN.fromJSON(best, AI_LIVE_SETTINGS) : createAgent(AI_LIVE_SETTINGS);
+    agent.savedConfig = best ? best.config : createAgent().config; // saved without the live-game tweaks
+    return agent;
+  } catch (err) {
+    console.warn('Tomorrow AI: brain file not usable, starting fresh.', err);
+    const agent = createAgent(AI_LIVE_SETTINGS);
+    agent.savedConfig = createAgent().config;
+    return agent;
+  }
+}
+
+function saveAIBrain(agent) {
+  if (!agent) return;
+  try {
+    const json = agent.toJSON();
+    json.config = agent.savedConfig || json.config;
+    localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(json));
+  } catch (err) { /* storage full or blocked: the refinement just isn't cached */ }
+}
+
+// Developer helpers in the browser console: TomorrowAI.info(), .download(), .reset()
+function exposeAIConsole(getAgent) {
+  window.TomorrowAI = {
+    info() {
+      const a = getAgent();
+      if (!a) return 'not loaded';
+      return {
+        generation: a.generation,
+        daysOfExperience: a.episodes,
+        decisions: a.decisions,
+        exploring: `${(a.epsilon * 100).toFixed(1)}%`,
+        parameters: a.online.paramCount,
+        uploads: syncEnabled() ? 'on' : 'off (see src/engine/ai/sync.js)'
+      };
+    },
+    download() {
+      const a = getAgent();
+      if (!a) return;
+      const json = a.toJSON();
+      json.config = a.savedConfig || json.config;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(json)], { type: 'application/json' }));
+      Object.assign(document.createElement('a'), { href: url, download: 'ai-brain.json' }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+    reset() {
+      try { localStorage.removeItem(AI_STORAGE_KEY); } catch (err) { /* ignore */ }
+      return "This browser's cached AI was cleared. Reload to use the published brain.";
+    }
+  };
 }
 
 // ===================================================================
@@ -1379,6 +1463,12 @@ function initApp() {
     toast(text, 'news');
     if (role === 'host') peerNetwork.broadcast({ type: 'NEWS', text });
   }
+
+  let aiAgent = null;
+  const aiReady = loadAIBrain().then((agent) => {
+    aiAgent = agent;
+    exposeAIConsole(() => aiAgent);
+  });
 
   const gameLoop = new GameLoop(orderBook, eventBus, {
     durationMinutes: GAME_DURATION_MINUTES,
@@ -1518,7 +1608,7 @@ function initApp() {
       points,
       bids: orderBook.levels('BUY', BOOK_LEVELS),
       asks: orderBook.levels('SELL', BOOK_LEVELS),
-      traders: gameLoop.fleet.size + ledger.ids().length,
+      traders: gameLoop.fleet.size + ledger.ids().filter((id) => id !== AI_ID).length,
       playerOrders: collectHumanOrders(),
       brackets: brackets.byPlayer()
     };
@@ -1530,7 +1620,8 @@ function initApp() {
   // previously broadcast one message each).
   eventBus.on('TRADE', (t) => {
     if (role !== 'host') return;
-    if (ledger.has(t.buyerId) || ledger.has(t.sellerId)) {
+    const isPlayer = (id) => id !== AI_ID && ledger.has(id);
+    if (isPlayer(t.buyerId) || isPlayer(t.sellerId)) {
       peerNetwork.broadcast({ type: 'SYNC_TRADE', payload: t });
     }
   });
@@ -1663,11 +1754,21 @@ function initApp() {
 
   function beginMarket() {
     startRunTracking(role === 'solo' ? 'single' : 'multi');
+    if (aiAgent) {
+      gameLoop.fleet.aiAgent = aiAgent;
+      ledger.register(AI_ID); // trades on the same $10,000 as everyone else
+    }
     marketOpen = true;
     eventBus.emit('MARKET_STATE', { open: true });
     accountManager.broadcastState();
     launchTradingScreen();
     gameLoop.start();
+    if (aiAgent) {
+      const days = aiAgent.episodes;
+      announce(days > 0
+        ? `${AI_NAME} is trading today, with ${days.toLocaleString('en-US')} days of practice behind it.`
+        : `${AI_NAME} is trading today for the very first time. Expect chaos.`);
+    }
   }
 
   function closeMarket() {
@@ -1681,8 +1782,14 @@ function initApp() {
     const results = {
       finalPrice,
       closeTime: formatSimTime(SESSION_CLOSE_SECS),
-      standings: ledger.standings(finalPrice)
+      standings: ledger.standings(finalPrice).map((s) => (s.id === AI_ID ? { ...s, name: AI_NAME, isAI: true } : s))
     };
+    saveAIBrain(aiAgent); // keep today's live refinement in this browser
+    const aiTrader = gameLoop.fleet.ai;
+    if (aiTrader) {
+      const humans = ledger.ids().filter((id) => id !== AI_ID).length;
+      uploadExperience(aiTrader.experience(), { humans }); // for the nightly long-term learning
+    }
     if (role === 'host') peerNetwork.broadcast({ type: 'GAME_OVER', results });
     endGame(results);
   }
@@ -1793,7 +1900,7 @@ function initApp() {
       currentUserId = getTraderName();
       ledger.register(currentUserId);
       accountManager.setPlayerId(currentUserId);
-      beginMarket();
+      aiReady.then(beginMarket);
     });
   }
 
@@ -1857,8 +1964,10 @@ function initApp() {
     btnStartGame.addEventListener('click', () => {
       if (role !== 'host' || marketOpen || gameLoop.finished) return;
       btnStartGame.disabled = true;
-      peerNetwork.broadcast({ type: 'START_GAME' });
-      beginMarket();
+      aiReady.then(() => {
+        peerNetwork.broadcast({ type: 'START_GAME' });
+        beginMarket();
+      });
     });
   }
 }
