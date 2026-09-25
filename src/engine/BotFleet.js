@@ -10,6 +10,7 @@
 
 import { BOT_TYPES, TUNING, rand, randInt } from './bots.js';
 import { random, gauss } from './random.js';
+import { RLTraderBot, AI_ID } from './ai/RLTrader.js';
 
 // ---- Tuning ----------------------------------------------------------------
 // Base population (1,000 agents): 90% noise traders of four kinds, 10% spread
@@ -242,7 +243,7 @@ export class MarketState {
 // BOT FLEET
 // ===================================================================
 export class BotFleet {
-  constructor(book, eventBus, { simSecsPerTick = 15, openSecs = 34200, closeSecs = 64800, onNews = null } = {}) {
+  constructor(book, eventBus, { simSecsPerTick = 15, openSecs = 34200, closeSecs = 64800, onNews = null, ai = null, aiOptions = {} } = {}) {
     this.book = book;
     this.eventBus = eventBus;
     this.ticksPerMinute = 60 / simSecsPerTick;
@@ -265,8 +266,35 @@ export class BotFleet {
     this.fastVol = this.slowVol = 0.8 * TUNING.valueVol; // mean |1-step return|, for heat
     this.newsLog = 0;       // log news intensity (see newsIntensity)
 
+    // Tomorrow AI: one learning trader per game, if a brain is supplied
+    this.aiAgent = ai;
+    this.aiOptions = aiOptions;
+    this.ai = null;
+
+    // Public market statistics (order flow, volume, the day's range) for the AI's features
+    this.flowBuy = 0;
+    this.flowSell = 0;
+    this.lastFlow = 0;
+    this.flowEma = 0;
+    this.lastVolume = 0;
+    this.volumeEma = 0;
+    this.traderHistory = [];
+    this.vwapNum = 0;
+    this.vwapDen = 0;
+    this.dayOpen = null;
+    this.dayHigh = -Infinity;
+    this.dayLow = Infinity;
+
     // Route fills to the bots involved so they know their positions
     eventBus.on('TRADE', (t) => {
+      if (t.aggressor === 'BUY') this.flowBuy += t.qty;
+      else if (t.aggressor === 'SELL') this.flowSell += t.qty;
+      else if (this.aiAgent && !this.warnedFlow) {
+        this.warnedFlow = true;
+        console.warn('Tomorrow AI: trades carry no "aggressor" field, so the AI cannot see order flow. Use the OrderBook.js from the AI update (see docs/tomorrow-ai.md).');
+      }
+      this.vwapNum += t.price * t.qty;
+      this.vwapDen += t.qty;
       const buyer = this.active.get(t.buyerId);
       if (buyer) buyer.onFill('BUY', t.price, t.qty);
       const seller = this.active.get(t.sellerId);
@@ -332,10 +360,18 @@ export class BotFleet {
     }
     this.events.sort((a, b) => a.at - b.at);
 
+    // Tomorrow AI joins (it trades like everyone else from the first tick)
+    if (this.aiAgent) {
+      this.ai = new RLTraderBot(AI_ID, this, { cohort: 'ai', agent: this.aiAgent, ...this.aiOptions });
+      this.active.set(AI_ID, this.ai);
+      this.rosterDirty = true;
+    }
+
     // Opening book: market makers quote and some noise traders rest orders
     // before the first trade, so the day doesn't open on an empty book.
     const m = new MarketState(this.book, history, 0);
     this.value = m.mid;
+    this.dayOpen = m.mid;
     for (const bot of this.active.values()) {
       if (bot.type === 'marketMaker') bot.onTick(m);
     }
@@ -349,7 +385,7 @@ export class BotFleet {
     this.simSeconds = simSeconds;
     while (this.events.length && this.events[0].at <= simSeconds) this.events.shift().run();
 
-    const m = new MarketState(this.book, history, tick);
+    const m = this.snapshot(history, tick);
     // Fair value takes a random step (news) and drifts a little toward where
     // the market actually trades, so big trades leave a lasting mark.
     if (this.value == null) this.value = m.mid;
@@ -384,6 +420,46 @@ export class BotFleet {
     }
     shuffle(this.roster); // nobody gets to act first every tick
     for (let i = 0; i < this.roster.length; i++) this.roster[i].tick(m);
+  }
+
+  // Market snapshot plus the public statistics the AI's features read
+  snapshot(history, tick) {
+    const m = new MarketState(this.book, history, tick);
+    const vol = this.flowBuy + this.flowSell;
+    this.lastFlow = vol > 0 ? (this.flowBuy - this.flowSell) / vol : 0;
+    this.flowEma = 0.7 * this.flowEma + 0.3 * this.lastFlow;
+    this.lastVolume = vol;
+    this.volumeEma = this.volumeEma ? 0.97 * this.volumeEma + 0.03 * vol : vol;
+    this.traderHistory.push(this.active.size);
+    if (this.traderHistory.length > this.ticksFor(60)) this.traderHistory.shift();
+    this.flowBuy = 0;
+    this.flowSell = 0;
+    this.dayHigh = Math.max(this.dayHigh, m.mid);
+    this.dayLow = Math.min(this.dayLow, m.mid);
+    Object.assign(m, {
+      fleet: this,
+      simSeconds: this.simSeconds,
+      flow: this.lastFlow,
+      flowEma: this.flowEma,
+      lastVolume: vol,
+      volumeEma: this.volumeEma,
+      tradersChange: this.active.size - this.traderHistory[0],
+      dayOpen: this.dayOpen ?? m.mid,
+      dayHigh: this.dayHigh,
+      dayLow: this.dayLow,
+      vwap: this.vwapDen > 0 ? this.vwapNum / this.vwapDen : m.mid,
+      traders: this.active.size
+    });
+    return m;
+  }
+
+  // Closing bell: the AI gets its final reward for the day
+  endDay(history) {
+    if (!this.ai) return;
+    const m = this.snapshot(history, this.tick);
+    m.value = this.value ?? m.mid;
+    m.heat = Math.min(HEAT_RANGE[1], Math.max(HEAT_RANGE[0], this.slowVol > 0 ? this.fastVol / this.slowVol : 1));
+    this.ai.finish(m);
   }
 
   // News doesn't arrive at an even pace: there are quiet stretches and busy
