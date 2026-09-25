@@ -1,12 +1,13 @@
 // src/ui/AlgoActionLogUI.js
 // Fills the strategy panel in algorithmic games: a status line for your own
-// script (language, what it's doing, the current decision round) and a
-// shared log of every order each strategy in the room placed, with side,
-// size and price. Your own print() output is shown only to you.
+// script (language, what it's doing, the current decision round), every
+// trader's running PnL, and a shared log of the orders each strategy placed,
+// with side, size and price. Your own print() output is shown only to you.
 // Events on the eventBus:
 //   ALGO_STATUS { playerId, language, status, detail }
 //   ALGO_ROUND  { round, phase: 'waiting' | 'live', pending, total }
 //   ALGO_LOG    { playerId, name, simTime, level, text }
+//   TICK        carries standings: [{ id, total, name?, isAI? }], best first
 const MAX_ROWS = 120;
 
 const CHIPS = {
@@ -29,10 +30,12 @@ export class AlgoActionLogUI {
     this.getCurrentUserId = getCurrentUserId;
     const $ = (id) => document.getElementById(id);
     this.strip = $('algo-status-strip');
+    this.standings = $('algo-standings');
     this.list = $('algo-log-list');
     this.rows = [];
     this.status = null;
     this.round = null;
+    this.live = false; // only algorithmic games show this panel
 
     eventBus.on('ALGO_STATUS', (s) => {
       if (s.playerId !== this.getCurrentUserId()) return;
@@ -44,11 +47,23 @@ export class AlgoActionLogUI {
       this.renderStrip();
     });
     eventBus.on('ALGO_LOG', (e) => this.addRow(e));
+    eventBus.on('TICK', (d) => {
+      // Skipped while the panel is hidden or the tab is in the background,
+      // so a discretionary game never pays for this.
+      if (!this.live || document.hidden || !d || !d.standings) return;
+      this.renderStandings(d.standings);
+    });
   }
 
-  reset() {
+  // Called when a game starts; `live` is true only in algorithmic games.
+  reset(live = false) {
+    this.live = live;
     this.rows = [];
     this.round = null;
+    if (this.standings) {
+      this.standings.classList.add('hidden');
+      this.standings.innerHTML = '';
+    }
     if (this.list) this.list.innerHTML = '<div class="empty">No strategy orders yet. The first decision round comes a few sim-minutes after the open.</div>';
     this.renderStrip();
   }
@@ -72,6 +87,24 @@ export class AlgoActionLogUI {
       <span class="t-ink font-medium">${s.language === 'r' ? 'R' : 'Python'} strategy</span>
       <span class="t-muted truncate">${escapeHtml(label)}</span>
       ${round ? `<span class="ml-auto t-faint num shrink-0">${escapeHtml(round)}</span>` : ''}`;
+  }
+
+  // One chip per trader, best PnL first. Bots aren't in here: only the
+  // humans (and Tomorrow AI) have accounts in the ledger.
+  renderStandings(rows) {
+    if (!this.standings || !rows.length) return;
+    const me = this.getCurrentUserId();
+    this.standings.classList.remove('hidden');
+    this.standings.innerHTML = rows.map((st, i) => {
+      const v = Math.round(st.total * 100) / 100;
+      const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 't-faint';
+      const isMe = st.id === me;
+      return `<span class="algo-standing${isMe ? ' is-me' : ''}">
+        <span class="rank">${i + 1}</span>
+        <span class="who">${escapeHtml(st.name || st.id)}${isMe ? ' <span class="t-faint" style="font-weight:400">(You)</span>' : ''}${st.isAI ? ' <span class="chip chip-gold">AI</span>' : ''}</span>
+        <span class="pnl ${cls}">${v < 0 ? '-' : '+'}$${Math.abs(v).toFixed(2)}</span>
+      </span>`;
+    }).join('');
   }
 
   addRow({ playerId, name, simTime, level, text }) {
