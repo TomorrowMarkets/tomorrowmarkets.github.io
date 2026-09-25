@@ -8,6 +8,10 @@ import { createRunTracker, isConfigured as leaderboardLive } from './services/le
 import { BranchingDQN } from './engine/ai/brain.js';
 import { createAgent, AI_ID, AI_NAME } from './engine/ai/RLTrader.js';
 import { uploadExperience, syncEnabled } from './engine/ai/sync.js';
+import { buildSnapshot } from './engine/algo/AlgoAPI.js';
+import { AlgoLabUI } from './ui/AlgoLabUI.js';
+import { AlgoActionLogUI } from './ui/AlgoActionLogUI.js';
+import { TradeHistoryUI } from './ui/TradeHistoryUI.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -22,7 +26,16 @@ const BOOK_LEVELS = 15;             // price levels per side shown in the order 
 const MAX_BACKLOG_TICKS = 40;       // a stall longer than this pauses the day instead of fast-forwarding it
 const NOISE_ORDER_TTL_TICKS = 40;   // noise-bot limit orders expire after 10 sim-minutes (keeps the book small)
 
-const HUMAN_ACTIONS = new Set(['SUBMIT_ORDER', 'CANCEL_ORDER', 'MODIFY_ORDER', 'MODIFY_BRACKET', 'CANCEL_BRACKET']);
+const HUMAN_ACTIONS = new Set(['SUBMIT_ORDER', 'CANCEL_ORDER', 'MODIFY_ORDER', 'MODIFY_BRACKET', 'CANCEL_BRACKET', 'CANCEL_ALL']);
+
+// Algorithmic games: the market pauses for a decision round every
+// ALGO_DECISION_EVERY_TICKS ticks (20 ticks = 5 sim-minutes, ~100 rounds a
+// day) and waits up to ALGO_DECISION_TIMEOUT_MS for every strategy. Each
+// strategy's own budget is 60 s (see AlgoRunner); the extra 5 s covers the
+// network round trip for players in a room.
+const ALGO_DECISION_EVERY_TICKS = 20;
+const ALGO_DECISION_TIMEOUT_MS = 65000;
+const REOPEN_LAB_KEY = 'tomorrowMarkets.reopenAlgoLab';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -1236,7 +1249,7 @@ class PulseClock {
 }
 
 class GameLoop {
-  constructor(orderBook, eventBus, { durationMinutes = GAME_DURATION_MINUTES, afterStep, onPulse, onFinish, onNews } = {}) {
+  constructor(orderBook, eventBus, { durationMinutes = GAME_DURATION_MINUTES, afterStep, onPulse, onFinish, onNews, shouldPause, onPaused } = {}) {
     this.orderBook = orderBook;
     this.fleet = new BotFleet(orderBook, eventBus, {
       simSecsPerTick: SIM_SECS_PER_TICK,
@@ -1247,6 +1260,10 @@ class GameLoop {
     this.afterStep = afterStep;
     this.onPulse = onPulse;
     this.onFinish = onFinish;
+    this.shouldPause = shouldPause || null; // (tick) => bool: stop after this tick until resume()
+    this.onPaused = onPaused || null;
+    this.paused = false;
+    this.pausedAt = 0;
 
     this.totalTicks = TOTAL_TICKS;
     this.tickIntervalMs = (durationMinutes * 60 * 1000) / this.totalTicks; // ≈294 ms for 10 minutes
@@ -1277,6 +1294,7 @@ class GameLoop {
     this.ticksDone = 0;
     this.simulatedSeconds = SESSION_OPEN_SECS;
     this.finished = false;
+    this.paused = false;
     this.tickBar.reset();
     this.lastClose = null;
     this.collecting = true;
@@ -1290,14 +1308,32 @@ class GameLoop {
 
   stop() {
     this.running = false;
+    this.paused = false;
     this.collecting = false;
     this.clock.stop();
+  }
+
+  // Freeze the day right after the tick just played. The wall clock is
+  // pinned to that tick, so resuming neither skips ticks nor bursts through
+  // the ones that would have been due during the pause.
+  pause() {
+    if (this.paused || !this.running) return;
+    this.paused = true;
+    this.pausedAt = this.startedAt + this.ticksDone * this.tickIntervalMs;
+    this.clock.stop();
+  }
+
+  resume() {
+    if (!this.paused || !this.running) return;
+    this.startedAt += performance.now() - this.pausedAt;
+    this.paused = false;
+    this.clock.start();
   }
 
   // Runs however many ticks the wall clock says are due, so the day always
   // lasts GAME_DURATION_MINUTES even if pulses arrive late or bunched up.
   pump() {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
     let due = Math.min(this.totalTicks, Math.floor((performance.now() - this.startedAt) / this.tickIntervalMs));
     const backlog = due - this.ticksDone;
     if (backlog > MAX_BACKLOG_TICKS) {
@@ -1308,8 +1344,18 @@ class GameLoop {
     }
 
     const points = [];
-    while (this.ticksDone < due) points.push(this.step());
+    while (this.ticksDone < due) {
+      points.push(this.step());
+      if (this.shouldPause && this.ticksDone < this.totalTicks && this.shouldPause(this.ticksDone)) {
+        this.pause();
+        break;
+      }
+    }
     if (points.length && this.onPulse) this.onPulse(points);
+    if (this.paused) {
+      if (this.onPaused) this.onPaused(this.ticksDone);
+      return;
+    }
 
     if (this.ticksDone >= this.totalTicks) {
       this.finished = true;
@@ -1442,8 +1488,11 @@ function initApp() {
   let joinToken = null;
   const tokenToId = new Map();
   let runTracker = null;    // this game's leaderboard ticket
-  let usedAlgorithm = false; // set when the strategy engine places an order: the score then counts as Algorithmic
   let stopFacts = null;
+  let sessionMode = 'discretionary'; // 'discretionary' | 'algorithmic', chosen fresh every game
+  let algoRunner = null;             // this player's AlgoRunner while sessionMode === 'algorithmic'
+  let pendingLaunch = null;          // { kind: 'solo' | 'host' | 'join', run } waiting on the mode choice
+  let lastTick = null;               // latest TICK payload: what a strategy's snapshot is built from
 
   const isAuthority = () => role === 'solo' || role === 'host';
   const getCurrentUserId = () => currentUserId;
@@ -1475,7 +1524,9 @@ function initApp() {
     afterStep: () => brackets.evaluate(),
     onPulse: (points) => publishState(points),
     onFinish: () => closeMarket(),
-    onNews: (text) => announce(text)
+    onNews: (text) => announce(text),
+    shouldPause: (tick) => sessionMode === 'algorithmic' && tick % ALGO_DECISION_EVERY_TICKS === 0,
+    onPaused: () => startDecisionRound()
   });
 
   const lobbyPaths = new PathsBackground(document.getElementById('lobby-canvas'));
@@ -1489,6 +1540,9 @@ function initApp() {
   });
   new ControlsUI(eventBus, accountManager, getCurrentUserId, toast);
   const gameOverUI = new GameOverUI();
+  const algoLabUI = new AlgoLabUI();
+  const algoActionLog = new AlgoActionLogUI(eventBus, getCurrentUserId);
+  const tradeHistoryUI = new TradeHistoryUI(eventBus, accountManager, getCurrentUserId);
 
   // DOM Elements
   const $ = (id) => document.getElementById(id);
@@ -1501,6 +1555,22 @@ function initApp() {
   const btnJoinMultiplayer = $('btn-join-multiplayer');
   const btnStartGame = $('btn-start-game');
   const roomCodeInput = $('room-code-input');
+  const modeSelect = $('mode-select');
+  const btnModeDiscretionary = $('mode-discretionary');
+  const btnModeAlgorithmic = $('mode-algorithmic');
+  const btnModeBack = $('btn-mode-back');
+  const indicatorPlaceholder = $('indicator-placeholder');
+  const tradeHistoryPanel = $('trade-history-panel');
+  const algoLogPanel = $('algo-log-panel');
+  const indicatorTitle = $('indicator-title');
+  const indicatorMeta = $('indicator-meta');
+  const indicatorDot = $('indicator-dot');
+  const tradeHistorySummary = $('trade-history-summary');
+  const roomModeChip = $('room-mode-chip');
+  const modeBadge = $('mode-badge');
+  const orderEntryPanel = $('order-entry-panel');
+  const orderEntryNote = $('order-entry-algo-note');
+  const btnEditStrategy = $('btn-edit-strategy');
   const displayRoomCode = $('display-room-code');
   const playerList = $('player-list');
   const playerCount = $('player-count');
@@ -1512,6 +1582,7 @@ function initApp() {
 
   const traderCount = $('trader-count');
   eventBus.on('TICK', (data) => {
+    lastTick = data;
     if (traderCount && typeof data.traders === 'number') traderCount.innerText = data.traders.toLocaleString('en-US');
     if (sessionProgress && typeof data.progress === 'number') {
       sessionProgress.style.width = `${Math.min(100, data.progress * 100).toFixed(1)}%`;
@@ -1555,7 +1626,6 @@ function initApp() {
   }
 
   function startRunTracking(mode) {
-    usedAlgorithm = false;
     runTracker = createRunTracker({ mode, durationMin: GAME_DURATION_MINUTES });
   }
 
@@ -1564,7 +1634,7 @@ function initApp() {
     const tracker = runTracker;
     runTracker = null;
     if (!tracker) return;
-    const category = usedAlgorithm ? 'algorithmic' : 'discretionary';
+    const category = sessionMode; // the two leaderboards are kept apart by the mode chosen before the game
     const mine = myStanding(results, currentUserId, accountManager);
     if (leaderboardLive) gameOverUI.showLeaderboard('pending', category);
     tracker.finish({ handle: currentUserId, category, pnl: mine.total }).then((res) => {
@@ -1579,6 +1649,180 @@ function initApp() {
     lobbyPaths.stop();
     if (lobbyScreen) lobbyScreen.classList.add('hidden');
     if (tradingScreen) tradingScreen.classList.remove('hidden');
+    applySessionMode();
+  }
+
+  // ---- Discretionary / Algorithmic ----------------------------------------
+  // Single player, Host and Join each stop at the mode choice before doing
+  // what they used to do straight away. `pendingLaunch.run` is that original
+  // flow; it runs once a mode (and for Algorithmic, a tested strategy) is set.
+
+  const modeLabel = (m) => (m === 'algorithmic' ? 'Algorithmic' : 'Discretionary');
+
+  function showModeSelect(kind, run) {
+    pendingLaunch = { kind, run };
+    if (lobbyMenu) lobbyMenu.classList.add('hidden');
+    if (modeSelect) modeSelect.classList.remove('hidden');
+    if (btnModeDiscretionary) btnModeDiscretionary.focus();
+  }
+
+  function backToLobbyMenu() {
+    pendingLaunch = null;
+    role = 'lobby';
+    sessionMode = 'discretionary';
+    disposeAlgoRunner();
+    if (modeSelect) modeSelect.classList.add('hidden');
+    if (waitingRoom) waitingRoom.classList.add('hidden');
+    if (lobbyMenu) lobbyMenu.classList.remove('hidden');
+  }
+
+  function runPendingLaunch() {
+    const launch = pendingLaunch;
+    pendingLaunch = null;
+    if (modeSelect) modeSelect.classList.add('hidden');
+    if (roomModeChip) roomModeChip.textContent = modeLabel(sessionMode);
+    if (launch) launch.run();
+  }
+
+  function openAlgoLab(note = '') {
+    if (modeSelect) modeSelect.classList.add('hidden');
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    lobbyPaths.stop();
+    algoLabUI.open({ note });
+  }
+
+  function disposeAlgoRunner() {
+    if (algoRunner) algoRunner.dispose();
+    algoRunner = null;
+  }
+
+  function algoLogEntry(level, text) {
+    return { playerId: currentUserId, name: currentUserId, simTime: lastTick ? lastTick.simTimeStr : '', level, text };
+  }
+
+  function attachAlgoRunner(runner) {
+    disposeAlgoRunner();
+    algoRunner = runner;
+    runner.onStatus = (status, detail) => {
+      eventBus.emit('ALGO_STATUS', { playerId: currentUserId, language: runner.language, status, detail });
+    };
+    runner.onLog = ({ level, text }) => {
+      if (level === 'debug') return console.debug(`[strategy] ${text}`);
+      // print() output is only shown to you; orders and problems go to the whole room.
+      if (level === 'log') return eventBus.emit('ALGO_LOG', algoLogEntry('log', text));
+      const entry = algoLogEntry(level, text);
+      if (role === 'client') {
+        peerNetwork.broadcast({ type: 'ALGO_LOG', entry }); // the host echoes it to everyone, you included
+      } else {
+        eventBus.emit('ALGO_LOG', entry);
+        if (role === 'host') peerNetwork.broadcast({ type: 'ALGO_LOG', entry });
+      }
+    };
+    // Orders take exactly the same route as the order ticket's Buy/Sell.
+    runner.onAction = (action) => eventBus.emit('USER_ACTION', action);
+  }
+
+  // Swaps the bottom panel (and the order ticket) to match this session:
+  // your own fills for discretionary, the strategy log for algorithmic.
+  function applySessionMode() {
+    const isAlgo = sessionMode === 'algorithmic';
+    if (indicatorPlaceholder) indicatorPlaceholder.classList.add('hidden');
+    if (tradeHistoryPanel) tradeHistoryPanel.classList.toggle('hidden', isAlgo);
+    if (algoLogPanel) algoLogPanel.classList.toggle('hidden', !isAlgo);
+    if (indicatorTitle) indicatorTitle.textContent = isAlgo ? 'Algorithmic strategy engine' : 'Trade history';
+    if (indicatorMeta) {
+      indicatorMeta.textContent = `Decision round every ${ALGO_DECISION_EVERY_TICKS * SIM_SECS_PER_TICK / 60} sim-min`;
+      indicatorMeta.classList.toggle('hidden', !isAlgo);
+    }
+    if (tradeHistorySummary) tradeHistorySummary.classList.toggle('hidden', isAlgo);
+    if (indicatorDot) indicatorDot.style.background = isAlgo ? 'var(--bid)' : 'var(--gold)';
+    if (modeBadge) {
+      modeBadge.textContent = modeLabel(sessionMode);
+      modeBadge.className = `chip ${isAlgo ? 'chip-gold' : 'chip-neutral'}`;
+    }
+    if (orderEntryPanel) orderEntryPanel.classList.toggle('algo-locked', isAlgo);
+    if (orderEntryNote) orderEntryNote.classList.toggle('hidden', !isAlgo);
+    tradeHistoryUI.reset();
+    algoActionLog.reset();
+    if (isAlgo && algoRunner) {
+      eventBus.emit('ALGO_STATUS', { playerId: currentUserId, language: algoRunner.language, status: algoRunner.status });
+    }
+  }
+
+  // ---- Algorithmic decision rounds (authority) ----------------------------
+  // Every ALGO_DECISION_EVERY_TICKS the game loop pauses (see GameLoop's
+  // shouldPause). Every strategy in the room gets the same snapshot and up
+  // to ALGO_DECISION_TIMEOUT_MS to answer; clients run theirs in their own
+  // browser and reply ALGO_DONE after sending their orders. The market
+  // resumes when everyone has answered, or when time runs out.
+
+  let decision = null;       // { round, waiting: Set<playerId>, total, timer }
+  let decisionRound = 0;
+  const droppedPlayers = new Set(); // left the room, or missed a round's deadline: not waited on
+  const connToId = new Map();       // host: PeerJS connection -> playerId
+
+  function emitRound(info) {
+    eventBus.emit('ALGO_ROUND', info);
+    if (role === 'host') peerNetwork.broadcast({ type: 'ALGO_ROUND', info });
+  }
+
+  function startDecisionRound() {
+    decisionRound += 1;
+    const round = decisionRound;
+    const waiting = new Set(ledger.ids().filter((id) => id !== AI_ID && !droppedPlayers.has(id)));
+    if (waiting.size === 0) {
+      gameLoop.resume();
+      return;
+    }
+    const total = waiting.size;
+    decision = { round, waiting, total, timer: setTimeout(() => endDecisionRound(round, true), ALGO_DECISION_TIMEOUT_MS) };
+    emitRound({ round, phase: 'waiting', pending: total, total });
+    if (role === 'host') peerNetwork.broadcast({ type: 'ALGO_DECISION', round });
+    if (waiting.has(currentUserId)) runLocalDecision(round).then(() => finishDecision(currentUserId, round));
+  }
+
+  function finishDecision(playerId, round) {
+    if (!decision || decision.round !== round || !decision.waiting.delete(playerId)) return;
+    if (decision.waiting.size === 0) endDecisionRound(round, false);
+    else emitRound({ round, phase: 'waiting', pending: decision.waiting.size, total: decision.total });
+  }
+
+  function endDecisionRound(round, timedOut) {
+    if (!decision || decision.round !== round) return;
+    clearTimeout(decision.timer);
+    const late = [...decision.waiting];
+    decision = null;
+    if (timedOut && late.length) {
+      // Don't make everyone wait a full minute every round for a player who
+      // may have gone. They're back in from the next round as soon as they
+      // answer (see onHostMessage ALGO_DONE).
+      for (const id of late) droppedPlayers.add(id);
+      announce(`Round ${round}: carried on without ${late.join(', ')} after ${ALGO_DECISION_TIMEOUT_MS / 1000}s. They'll rejoin the rounds once they respond.`);
+    }
+    if (!marketOpen) return;
+    publishState();
+    emitRound({ round, phase: 'live' });
+    gameLoop.resume();
+  }
+
+  // Runs this browser's own strategy on the latest state it has seen. Used
+  // by the authority for its own player and by clients on ALGO_DECISION.
+  async function runLocalDecision(round) {
+    if (!algoRunner || !lastTick) return;
+    try {
+      await algoRunner.decide(buildSnapshot({
+        priceHistory: lastTick.priceHistory || [],
+        bids: lastTick.bids || [],
+        asks: lastTick.asks || [],
+        mid: lastTick.midPrice,
+        openOrders: (lastTick.playerOrders && lastTick.playerOrders[currentUserId]) || [],
+        account: accountManager,
+        simTimeStr: lastTick.simTimeStr,
+        round
+      }));
+    } catch (err) {
+      console.warn('Strategy round failed', err); // decide() handles its own errors; this is a last resort
+    }
   }
 
   // ---- Authority: state publishing ------------------------------------
@@ -1719,6 +1963,9 @@ function initApp() {
   function handleAction(action, playerId) {
     if (!action || !ledger.has(playerId)) return;
     if (!marketOpen) return notify(playerId, 'The market is closed.', 'warn');
+    if (sessionMode === 'algorithmic' && (action.type === 'SUBMIT_ORDER' || action.type === 'MODIFY_ORDER') && action.source !== 'algo') {
+      return notify(playerId, 'Manual orders are off in algorithmic games: your strategy trades for you.', 'warn');
+    }
     const mid = orderBook.getMidPrice();
 
     switch (action.type) {
@@ -1734,6 +1981,11 @@ function initApp() {
         return modifyBracketForPlayer(playerId, action.bracketId, action, mid);
       case 'CANCEL_BRACKET':
         if (brackets.remove(action.bracketId, playerId)) notify(playerId, 'Stop loss and take profit removed.', 'info');
+        return undefined;
+      case 'CANCEL_ALL':
+        for (const o of orderBook.getPlayerOpenOrders(playerId)) {
+          if (orderBook.cancelOrder(o.id, playerId)) brackets.dropOrder(o.id);
+        }
         return undefined;
       default:
         return undefined;
@@ -1754,6 +2006,9 @@ function initApp() {
 
   function beginMarket() {
     startRunTracking(role === 'solo' ? 'single' : 'multi');
+    decision = null;
+    decisionRound = 0;
+    droppedPlayers.clear();
     if (aiAgent) {
       gameLoop.fleet.aiAgent = aiAgent;
       ledger.register(AI_ID); // trades on the same $10,000 as everyone else
@@ -1797,20 +2052,34 @@ function initApp() {
   function endGame(results) {
     marketOpen = false;
     eventBus.emit('MARKET_STATE', { open: false });
+    if (decision) {
+      clearTimeout(decision.timer);
+      decision = null;
+    }
     gameOverUI.show(results, currentUserId, accountManager);
+    if (btnEditStrategy) btnEditStrategy.classList.toggle('hidden', sessionMode !== 'algorithmic');
     submitRun(results);
   }
 
   // ---- Networking -----------------------------------------------------------
 
   eventBus.on('NET_HOST_CONNECTED', () => {
-    peerNetwork.broadcast({ type: 'JOIN_LOBBY', handle: currentUserId, token: joinToken });
+    peerNetwork.broadcast({ type: 'JOIN_LOBBY', handle: currentUserId, token: joinToken, mode: sessionMode });
   });
 
-  function onHostMessage(data) {
+  function onHostMessage(data, conn) {
     if (data.type === 'JOIN_LOBBY') {
       if (marketOpen || gameLoop.finished) {
         peerNetwork.broadcast({ type: 'JOIN_REJECTED', token: data.token, reason: 'This game has already started.' });
+        return;
+      }
+      // Everyone in a room plays the same mode, so each score lands on one leaderboard.
+      if ((data.mode || 'discretionary') !== sessionMode) {
+        peerNetwork.broadcast({
+          type: 'JOIN_REJECTED',
+          token: data.token,
+          reason: `This room is ${modeLabel(sessionMode).toLowerCase()}. Join again and choose ${modeLabel(sessionMode)}.`
+        });
         return;
       }
       let id = data.token ? tokenToId.get(data.token) : null;
@@ -1820,12 +2089,20 @@ function initApp() {
         connectedPlayers.push({ id, isHost: false });
         ledger.register(id);
       }
+      if (conn) connToId.set(conn, id);
       peerNetwork.broadcast({ type: 'WELCOME', token: data.token, playerId: id });
       peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers });
       renderPlayerList();
     } else if (HUMAN_ACTIONS.has(data.type)) {
       handleAction(data, data.playerId);
       if (marketOpen) publishState();
+    } else if (data.type === 'ALGO_LOG' && data.entry) {
+      eventBus.emit('ALGO_LOG', data.entry);
+      peerNetwork.broadcast({ type: 'ALGO_LOG', entry: data.entry });
+    } else if (data.type === 'ALGO_DONE') {
+      const id = connToId.get(conn) || data.playerId;
+      if (droppedPlayers.has(id) && connToId.has(conn)) droppedPlayers.delete(id); // a late answer: they're back
+      finishDecision(id, data.round);
     }
   }
 
@@ -1845,10 +2122,8 @@ function initApp() {
       case 'JOIN_REJECTED':
         if (data.token !== joinToken) break;
         toast(data.reason || 'Could not join that room.', 'error');
-        role = 'lobby';
         hideFacts();
-        if (lobbyMenu) lobbyMenu.classList.remove('hidden');
-        if (waitingRoom) waitingRoom.classList.add('hidden');
+        backToLobbyMenu();
         break;
       case 'START_GAME':
         startRunTracking('multi');
@@ -1871,6 +2146,21 @@ function initApp() {
       case 'SYNC_TRADE':
         eventBus.emit('TRADE', data.payload);
         break;
+      case 'ALGO_LOG':
+        eventBus.emit('ALGO_LOG', data.entry);
+        break;
+      case 'ALGO_ROUND':
+        eventBus.emit('ALGO_ROUND', data.info);
+        break;
+      case 'ALGO_DECISION': {
+        // Run our strategy on the state we just received; the host resumes
+        // the market once every player has answered.
+        const { round } = data;
+        runLocalDecision(round).finally(() => {
+          peerNetwork.broadcast({ type: 'ALGO_DONE', round, playerId: currentUserId });
+        });
+        break;
+      }
       case 'NOTICE':
         if (data.playerId === currentUserId) toast(data.text, data.level);
         break;
@@ -1885,48 +2175,91 @@ function initApp() {
     }
   }
 
-  eventBus.on('NET_DATA_RECEIVED', ({ data } = {}) => {
+  eventBus.on('NET_DATA_RECEIVED', ({ data, conn } = {}) => {
     if (!data || typeof data !== 'object') return;
-    if (role === 'host') onHostMessage(data);
+    if (role === 'host') onHostMessage(data, conn);
     else if (role === 'client') onClientMessage(data);
+  });
+
+  // A player who leaves mid-game is never waited on in later decision rounds.
+  eventBus.on('NET_CLIENT_DISCONNECTED', (conn) => {
+    if (role !== 'host') return;
+    const id = connToId.get(conn);
+    connToId.delete(conn);
+    if (!id || !marketOpen) return;
+    droppedPlayers.add(id);
+    if (decision) finishDecision(id, decision.round);
   });
 
   // ---- Lobby buttons --------------------------------------------------------
 
+  // Each entry point asks for the mode first (showModeSelect); these are the
+  // original flows, run once the mode (and strategy, if algorithmic) is set.
+
+  function startSinglePlayer() {
+    role = 'solo';
+    currentUserId = getTraderName();
+    ledger.register(currentUserId);
+    accountManager.setPlayerId(currentUserId);
+    aiReady.then(beginMarket);
+  }
+
+  function startHosting() {
+    role = 'host';
+    currentUserId = getTraderName();
+    ledger.register(currentUserId);
+    accountManager.setPlayerId(currentUserId);
+
+    const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
+    peerNetwork.initHost(roomCode);
+
+    if (displayRoomCode) displayRoomCode.innerText = roomCode;
+    if (roomCodeDisplay) roomCodeDisplay.innerText = roomCode;
+    if (roomBadge) roomBadge.classList.remove('hidden');
+
+    connectedPlayers = [{ id: currentUserId, isHost: true }];
+    renderPlayerList();
+
+    if (lobbyMenu) lobbyMenu.classList.add('hidden');
+    if (waitingRoom) waitingRoom.classList.remove('hidden');
+    if (hostControls) hostControls.classList.remove('hidden');
+    if (clientStatus) clientStatus.classList.add('hidden');
+    showFacts();
+  }
+
+  function startJoining(code) {
+    role = 'client';
+    currentUserId = getTraderName();
+    joinToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    accountManager.setPlayerId(currentUserId);
+
+    peerNetwork.initClient(code, currentUserId);
+
+    if (displayRoomCode) displayRoomCode.innerText = code;
+    if (roomCodeDisplay) roomCodeDisplay.innerText = code;
+    if (roomBadge) roomBadge.classList.remove('hidden');
+
+    connectedPlayers = [{ id: currentUserId, isHost: false }];
+    renderPlayerList();
+
+    if (lobbyMenu) lobbyMenu.classList.add('hidden');
+    if (waitingRoom) waitingRoom.classList.remove('hidden');
+    if (hostControls) hostControls.classList.add('hidden');
+    if (clientStatus) clientStatus.classList.remove('hidden');
+    showFacts();
+  }
+
   if (btnSinglePlayer) {
     btnSinglePlayer.addEventListener('click', () => {
       if (role !== 'lobby') return;
-      role = 'solo';
-      currentUserId = getTraderName();
-      ledger.register(currentUserId);
-      accountManager.setPlayerId(currentUserId);
-      aiReady.then(beginMarket);
+      showModeSelect('solo', startSinglePlayer);
     });
   }
 
   if (btnHostMultiplayer) {
     btnHostMultiplayer.addEventListener('click', () => {
       if (role !== 'lobby') return;
-      role = 'host';
-      currentUserId = getTraderName();
-      ledger.register(currentUserId);
-      accountManager.setPlayerId(currentUserId);
-
-      const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
-      peerNetwork.initHost(roomCode);
-
-      if (displayRoomCode) displayRoomCode.innerText = roomCode;
-      if (roomCodeDisplay) roomCodeDisplay.innerText = roomCode;
-      if (roomBadge) roomBadge.classList.remove('hidden');
-
-      connectedPlayers = [{ id: currentUserId, isHost: true }];
-      renderPlayerList();
-
-      if (lobbyMenu) lobbyMenu.classList.add('hidden');
-      if (waitingRoom) waitingRoom.classList.remove('hidden');
-      if (hostControls) hostControls.classList.remove('hidden');
-      if (clientStatus) clientStatus.classList.add('hidden');
-      showFacts();
+      showModeSelect('host', startHosting);
     });
   }
 
@@ -1938,26 +2271,71 @@ function initApp() {
         toast('Enter the 6-digit room code from your host.', 'error');
         return;
       }
-      role = 'client';
-      currentUserId = getTraderName();
-      joinToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      accountManager.setPlayerId(currentUserId);
-
-      peerNetwork.initClient(code, currentUserId);
-
-      if (displayRoomCode) displayRoomCode.innerText = code;
-      if (roomCodeDisplay) roomCodeDisplay.innerText = code;
-      if (roomBadge) roomBadge.classList.remove('hidden');
-
-      connectedPlayers = [{ id: currentUserId, isHost: false }];
-      renderPlayerList();
-
-      if (lobbyMenu) lobbyMenu.classList.add('hidden');
-      if (waitingRoom) waitingRoom.classList.remove('hidden');
-      if (hostControls) hostControls.classList.add('hidden');
-      if (clientStatus) clientStatus.classList.remove('hidden');
-      showFacts();
+      showModeSelect('join', () => startJoining(code));
     });
+  }
+
+  // ---- Mode choice & Algo Lab ------------------------------------------------
+
+  if (btnModeDiscretionary) {
+    btnModeDiscretionary.addEventListener('click', () => {
+      if (!pendingLaunch) return;
+      sessionMode = 'discretionary';
+      disposeAlgoRunner();
+      runPendingLaunch();
+    });
+  }
+
+  if (btnModeAlgorithmic) {
+    btnModeAlgorithmic.addEventListener('click', () => {
+      if (!pendingLaunch) return;
+      sessionMode = 'algorithmic';
+      openAlgoLab();
+    });
+  }
+
+  if (btnModeBack) btnModeBack.addEventListener('click', () => backToLobbyMenu());
+
+  algoLabUI.onReady = (runner) => {
+    attachAlgoRunner(runner);
+    algoLabUI.close();
+    // Solo goes straight to the market; host and join go on to the waiting room.
+    if (pendingLaunch && pendingLaunch.kind !== 'solo') {
+      if (lobbyScreen) lobbyScreen.classList.remove('hidden');
+      lobbyPaths.start();
+    }
+    runPendingLaunch();
+  };
+
+  algoLabUI.onBack = () => {
+    algoLabUI.close();
+    if (lobbyScreen) lobbyScreen.classList.remove('hidden');
+    lobbyPaths.start();
+    backToLobbyMenu();
+  };
+
+  // "Improve strategy & play again": the page reloads (as Back to menu
+  // always has), then reopens the Algo Lab on the saved draft.
+  if (btnEditStrategy) {
+    btnEditStrategy.addEventListener('click', () => {
+      try {
+        sessionStorage.setItem(REOPEN_LAB_KEY, JSON.stringify({ handle: currentUserId }));
+      } catch (err) { /* storage blocked: it just returns to the menu */ }
+      window.location.reload();
+    });
+  }
+
+  let reopen = null;
+  try {
+    reopen = JSON.parse(sessionStorage.getItem(REOPEN_LAB_KEY) || 'null');
+    sessionStorage.removeItem(REOPEN_LAB_KEY);
+  } catch (err) { /* storage blocked */ }
+  if (reopen) {
+    const nameInput = $('trader-name-input');
+    if (nameInput && reopen.handle) nameInput.value = reopen.handle;
+    sessionMode = 'algorithmic';
+    pendingLaunch = { kind: 'solo', run: startSinglePlayer };
+    openAlgoLab('Your last strategy is loaded. Test & enter starts a new single-player day; Back lets you host or join a room instead.');
   }
 
   if (btnStartGame) {
