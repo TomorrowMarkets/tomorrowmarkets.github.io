@@ -16,7 +16,7 @@ Features.
 ~~12. Lobby UI, leaderboard, beginning of setup for multiple games.~~ \
 ~~13. Features, indicators, basic signals~~ \
 ~~14. RL bot~~ \
-15. Python, pinescript, R, TMRWUSERLANGUAGE \
+15. Python, R, pinescript, TMRWUSERLANGUAGE \
 16. Different game modes \
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
 --- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
