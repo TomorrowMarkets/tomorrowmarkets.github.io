@@ -2,19 +2,28 @@
 // Sends each finished game's AI experience to the "experience inbox" so the
 // nightly trainer can fold it into the long-term brain.
 //
-// Setup (once): create the table from supabase/ai_experience.sql in a free
-// Supabase project, then paste the project URL and its public "anon" key
-// below. The anon key is safe to publish: the table only accepts inserts from
-// it, nobody can read or change anything with it. Leave these empty to keep
-// uploads switched off (the AI still learns live in each game).
+// Paste your project's PUBLISHABLE key below (Supabase: Project settings ->
+// API Keys -> Publishable key, starts with sb_publishable_). It is safe to
+// publish: the table only accepts new rows from it and nobody can read with
+// it. Never put the SECRET key (sb_secret_...) here or anywhere in the site.
+// Leave publishableKey empty to keep uploads switched off.
 
 export const AI_SYNC = {
-  supabaseUrl: 'https://iwmqwqguisduqwnsdbyj.supabase.co',  // e.g. 'https://abcdefghijklm.supabase.co'
-  anonKey: 'sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW',      // Project settings -> API -> anon public key
+  supabaseUrl: 'https://iwmqwqguisduqwnsdbyj.supabase.co',
+  publishableKey: '', // paste the full sb_publishable_... key here
   table: 'ai_experience'
 };
 
-export const syncEnabled = () => Boolean(AI_SYNC.supabaseUrl && AI_SYNC.anonKey);
+export const syncEnabled = () => Boolean(AI_SYNC.supabaseUrl && AI_SYNC.publishableKey);
+
+// New Supabase keys (sb_...) go only in the apikey header; sending them as a
+// Bearer token too makes Supabase reject the request. Legacy JWT keys (eyJ...)
+// need both headers.
+export function supabaseHeaders(key) {
+  const headers = { apikey: key };
+  if (key.startsWith('eyJ')) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
 
 export async function uploadExperience(experience, meta = {}) {
   if (!syncEnabled() || !experience || !experience.decisions) return false;
@@ -22,8 +31,7 @@ export async function uploadExperience(experience, meta = {}) {
     const res = await fetch(`${AI_SYNC.supabaseUrl.replace(/\/$/, '')}/rest/v1/${AI_SYNC.table}`, {
       method: 'POST',
       headers: {
-        apikey: AI_SYNC.anonKey,
-        Authorization: `Bearer ${AI_SYNC.anonKey}`,
+        ...supabaseHeaders(AI_SYNC.publishableKey),
         'Content-Type': 'application/json',
         Prefer: 'return=minimal'
       },
@@ -33,9 +41,9 @@ export async function uploadExperience(experience, meta = {}) {
         pnl: experience.pnl,
         humans: meta.humans ?? null,
         payload: experience
-      }),
-      keepalive: false
+      })
     });
+    if (!res.ok) console.warn('Tomorrow AI: upload refused', res.status, await res.text());
     return res.ok;
   } catch (err) {
     return false; // offline or blocked: the game carries on regardless
