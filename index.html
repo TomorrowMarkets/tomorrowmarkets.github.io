@@ -306,6 +306,46 @@
       background: radial-gradient(rgba(176, 141, 60, 0.22) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(255, 255, 255, 0.45);
     }
 
+    /* ---- Mode select (discretionary / algorithmic) -------------------- */
+    .mode-option {
+      display: block; width: 100%; text-align: left; padding: 14px 16px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.7); border: 1px solid var(--line-strong); cursor: pointer;
+      transition: border-color .15s, background-color .15s, transform .05s;
+    }
+    .mode-option:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
+    .mode-option:active { transform: translateY(1px); }
+    .mode-option-title { display: block; font-size: 14px; font-weight: 600; color: var(--ink); }
+    .mode-option-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+    /* ---- Algo Lab ------------------------------------------------------ */
+    .algo-console {
+      max-height: 8rem; overflow-y: auto; padding: 8px 10px; border-radius: 8px; font-size: 11px;
+      font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; white-space: pre-wrap;
+      background: rgba(11, 29, 71, 0.04); border: 1px solid var(--line);
+    }
+    .algo-console .line-error { color: var(--ask); }
+    .algo-console .line-warn { color: var(--gold-ink); }
+    .algo-console .line-success { color: var(--bid); }
+    #algo-code {
+      font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 12.5px; line-height: 1.55;
+      resize: none; white-space: pre;
+    }
+
+    /* ---- Algo action log & status strip -------------------------------- */
+    .algo-status-strip { font-size: 11.5px; padding: 7px 9px; border-radius: 9px; background: rgba(11, 29, 71, 0.045); }
+    .algo-status-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
+    .algo-status-dot.is-ready { background: var(--bid); }
+    .algo-status-dot.is-error { background: var(--ask); }
+    .algo-status-dot.is-running { background: var(--gold); }
+    .algo-log-text { display: block; margin-top: 1px; white-space: pre-wrap; word-break: break-word; }
+
+    /* Algorithmic games: the strategy trades, so the manual ticket is locked */
+    #order-entry-panel.algo-locked .order-entry-body { opacity: .4; pointer-events: none; }
+    .algo-lock-note {
+      font-size: 11.5px; line-height: 1.4; color: var(--gold-ink); padding: 7px 9px; border-radius: 9px;
+      background: var(--gold-tint);
+    }
+
     /* ---- Lobby -------------------------------------------------------- */
     .lobby { background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%); }
     .lobby-dots {
@@ -406,6 +446,25 @@
             </div>
           </div>
 
+          <!-- Step 1b: Discretionary / Algorithmic -->
+          <div id="mode-select" class="hidden lobby-card p-6 space-y-5">
+            <div>
+              <h2 class="serif text-[28px] font-normal leading-tight t-ink">How will you trade?</h2>
+              <p class="text-xs t-muted mt-1">This sets today's session — you can pick again next game.</p>
+            </div>
+            <div class="space-y-2.5">
+              <button id="mode-discretionary" type="button" class="mode-option">
+                <span class="mode-option-title">Discretionary</span>
+                <span class="mode-option-desc">Trade by hand with the order ticket, chart and book.</span>
+              </button>
+              <button id="mode-algorithmic" type="button" class="mode-option">
+                <span class="mode-option-title">Algorithmic</span>
+                <span class="mode-option-desc">Load a Python or R strategy and let it trade for you.</span>
+              </button>
+            </div>
+            <button id="btn-mode-back" type="button" class="btn btn-ghost btn-lg">Back</button>
+          </div>
+
           <!-- Step 2: Waiting Room Lobby -->
           <div id="waiting-room" class="hidden lobby-card p-6 space-y-5">
             <div>
@@ -414,7 +473,7 @@
             </div>
 
             <div class="row-card code-box">
-              <span class="block text-[11px] t-muted mb-0.5">Room code</span>
+              <span class="flex items-center justify-center gap-2 text-[11px] t-muted mb-0.5">Room code <span id="room-mode-chip" class="chip chip-neutral">Discretionary</span></span>
               <div id="display-room-code" class="num text-[32px] font-semibold tracking-[0.12em] t-ink">------</div>
             </div>
 
@@ -448,6 +507,104 @@
   </div>
 
   <!-- ================================================================
+       ALGO LAB: write/upload a strategy before entering the market
+       ================================================================ -->
+  <div id="algo-lab-screen" class="hidden flex-1 min-h-0 flex flex-col overflow-hidden lobby">
+    <header class="topbar h-12 px-4 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-3">
+        <img src="assets/logo.svg" alt="" class="w-6 h-6 rounded-[3px]" />
+        <span class="wordmark text-[18px] leading-none">Tomorrow Markets</span>
+        <span class="chip chip-gold">Algorithmic</span>
+      </div>
+      <button id="btn-algo-back" type="button" class="btn btn-ghost">Back</button>
+    </header>
+
+    <div class="flex-1 min-h-0 p-3 grid lg:grid-cols-[minmax(0,1fr)_21rem] gap-3 overflow-y-auto">
+      <section class="glass p-3.5 flex flex-col min-h-0" style="min-height: 26rem;">
+        <div class="flex items-center justify-between mb-2.5 shrink-0 flex-wrap gap-2">
+          <div class="seg flex" role="group" aria-label="Language">
+            <button type="button" data-lang="python" class="seg-btn is-active">Python</button>
+            <button type="button" data-lang="r" class="seg-btn">R</button>
+            <button type="button" data-lang="simple" class="seg-btn opacity-50 cursor-not-allowed" disabled title="Coming soon">Simple (soon)</button>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button id="btn-algo-template" type="button" class="mini">Reset to template</button>
+            <label class="mini" style="cursor: pointer;">
+              Upload .py / .R
+              <input id="algo-file-input" type="file" accept=".py,.r,.R,.txt" class="hidden" />
+            </label>
+          </div>
+        </div>
+        <textarea id="algo-code" spellcheck="false" autocapitalize="off" autocomplete="off"
+          class="field flex-1 min-h-0" style="min-height: 18rem;"></textarea>
+        <div id="algo-console" class="algo-console mt-2.5 shrink-0 hidden"></div>
+        <div class="flex items-center justify-between mt-3 shrink-0 gap-3">
+          <span id="algo-lab-status" class="text-xs t-muted"></span>
+          <button id="btn-algo-enter" type="button" class="btn btn-primary shrink-0">Test &amp; enter the market</button>
+        </div>
+      </section>
+
+      <aside class="glass p-3.5 overflow-y-auto text-xs t-muted leading-relaxed" style="min-height: 26rem;">
+        <div class="panel-title mb-2.5">Reference</div>
+
+        <div id="algo-reference-python" class="space-y-3">
+          <div>
+            <div class="sublabel mb-1">Each turn, <code class="t-ink">data</code> has</div>
+            <ul class="space-y-1 list-disc pl-4">
+              <li><code class="t-ink">close</code>, <code class="t-ink">open</code>, <code class="t-ink">high</code>, <code class="t-ink">low</code>, <code class="t-ink">volume</code> — lists, oldest first</li>
+              <li><code class="t-ink">returns</code> — % change bar to bar</li>
+              <li><code class="t-ink">sma20</code>, <code class="t-ink">sma50</code>, <code class="t-ink">ema12</code>, <code class="t-ink">ema26</code> — moving averages (<code class="t-ink">None</code> until warmed up)</li>
+              <li><code class="t-ink">book["bids"]</code>, <code class="t-ink">book["asks"]</code> — <code class="t-ink">[{"price":.., "qty":..}]</code>, best first</li>
+              <li><code class="t-ink">book["mid"]</code>, <code class="t-ink">book["spread"]</code>, <code class="t-ink">book["imbalance"]</code> — top-of-book, imbalance in [-1, 1]</li>
+              <li><code class="t-ink">orders</code>: your working limit orders</li>
+              <li><code class="t-ink">account["cash"|"shares"|"avg_entry"|"realized_pnl"|"unrealized_pnl"]</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="sublabel mb-1">To trade</div>
+            <p><code class="t-ink">market_order("buy" | "sell", qty)</code></p>
+            <p><code class="t-ink">limit_order("buy" | "sell", qty, price)</code></p>
+            <p><code class="t-ink">cancel_all()</code>: pull all your working orders</p>
+          </div>
+          <div>
+            <div class="sublabel mb-1">How a game runs</div>
+            <p>Define <code class="t-ink">on_tick(data)</code>. Every few sim-minutes the market pauses for a decision round: every strategy in the room gets the same snapshot, orders are placed, then the day carries on.</p>
+            <p class="mt-1.5">Each round gets up to 60 seconds. A strategy that runs out of time is restarted (top-level variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
+            <p class="mt-1.5"><code class="t-ink">numpy</code>, <code class="t-ink">pandas</code> and other Pyodide packages import normally.</p>
+          </div>
+        </div>
+
+        <div id="algo-reference-r" class="hidden space-y-3">
+          <div>
+            <div class="sublabel mb-1">Each turn, <code class="t-ink">data</code> has</div>
+            <ul class="space-y-1 list-disc pl-4">
+              <li><code class="t-ink">$close</code>, <code class="t-ink">$open</code>, <code class="t-ink">$high</code>, <code class="t-ink">$low</code>, <code class="t-ink">$volume</code> — vectors, oldest first</li>
+              <li><code class="t-ink">$returns</code> — % change bar to bar</li>
+              <li><code class="t-ink">$sma20</code>, <code class="t-ink">$sma50</code>, <code class="t-ink">$ema12</code>, <code class="t-ink">$ema26</code> — moving averages (<code class="t-ink">NA</code> until warmed up)</li>
+              <li><code class="t-ink">$book$bids</code>, <code class="t-ink">$book$asks</code> — data frames of price/qty, best first</li>
+              <li><code class="t-ink">$book$mid</code>, <code class="t-ink">$spread</code>, <code class="t-ink">$imbalance</code> — top-of-book, imbalance in [-1, 1]</li>
+              <li><code class="t-ink">$orders</code>: your working limit orders</li>
+              <li><code class="t-ink">$account$cash / $shares / $avg_entry / $realized_pnl / $unrealized_pnl</code></li>
+            </ul>
+          </div>
+          <div>
+            <div class="sublabel mb-1">To trade</div>
+            <p><code class="t-ink">market_order("buy" | "sell", qty)</code></p>
+            <p><code class="t-ink">limit_order("buy" | "sell", qty, price)</code></p>
+            <p><code class="t-ink">cancel_all()</code>: pull all your working orders</p>
+          </div>
+          <div>
+            <div class="sublabel mb-1">How a game runs</div>
+            <p>Define <code class="t-ink">on_tick &lt;- function(data) { ... }</code>. Every few sim-minutes the market pauses for a decision round: every strategy gets the same snapshot, orders are placed, then the day carries on. Variables set with <code class="t-ink">&lt;&lt;-</code> (or outside the function) keep their values between rounds.</p>
+            <p class="mt-1.5">Each round gets up to 60 seconds. A strategy that runs out of time is restarted (variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
+            <p class="mt-1.5">Runs on <a href="https://webr.r-wasm.org" target="_blank" rel="noopener" class="footer-link">webR</a> in your browser; <code class="t-ink">jsonlite</code> is installed automatically the first time.</p>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- ================================================================
        TRADING DASHBOARD SCREEN
        ================================================================ -->
   <div id="trading-screen" class="hidden flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -460,6 +617,7 @@
         <span class="chip chip-neutral ml-1">Spot / USD</span>
         <span class="chip chip-neutral" title="Traders in the market right now"><span id="trader-count" class="num">0</span> traders</span>
         <span id="room-badge" class="hidden chip chip-gold">Room <span id="room-code-display" class="num">------</span></span>
+        <span id="mode-badge" class="chip chip-neutral">Discretionary</span>
       </div>
       <div class="flex items-center gap-4">
         <div class="hidden md:flex items-center gap-2 text-[11px] t-faint num">
@@ -529,8 +687,10 @@
       <div class="area-side flex flex-col gap-2.5">
 
         <!-- Order Entry Form -->
-        <section class="glass p-3.5 space-y-3 shrink-0">
+        <section id="order-entry-panel" class="glass p-3.5 space-y-3 shrink-0">
           <div class="panel-title">Order entry</div>
+          <p id="order-entry-algo-note" class="algo-lock-note hidden">Your strategy is trading for you. Manual orders are off in algorithmic games so the leaderboard stays fair.</p>
+          <div class="order-entry-body space-y-3">
 
           <div class="seg grid grid-cols-2">
             <button id="type-limit-btn" class="seg-btn is-active">Limit</button>
@@ -563,6 +723,7 @@
           <div class="grid grid-cols-2 gap-2">
             <button id="btn-buy" class="btn btn-buy">Buy / Long</button>
             <button id="btn-sell" class="btn btn-sell">Sell / Short</button>
+          </div>
           </div>
         </section>
 
@@ -604,17 +765,39 @@
         </section>
       </div>
 
-      <!-- Strategy & Technical Indicators Workspace (Reserved) -->
+      <!-- Strategy & Technical Indicators Workspace: swaps its body between a
+           placeholder, a trade-history table (discretionary) and a live
+           algo action log (algorithmic) — see main.js applyMode(). -->
       <section id="indicator-panel" class="area-ind glass p-3.5 flex flex-col">
         <div class="flex items-center justify-between mb-2.5 shrink-0">
           <div class="flex items-center gap-2">
-            <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--gold)"></span>
-            <span class="panel-title">Indicator &amp; algorithmic strategy engine</span>
+            <span id="indicator-dot" class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--gold)"></span>
+            <span id="indicator-title" class="panel-title">Indicator &amp; algorithmic strategy engine</span>
           </div>
-          <span class="panel-meta">Workspace inactive</span>
+          <span id="indicator-meta" class="panel-meta">Workspace inactive</span>
+          <span id="trade-history-summary" class="panel-meta num hidden"></span>
         </div>
-        <div class="workspace flex-1 min-h-0 flex items-center justify-center text-center px-4">
+
+        <div id="indicator-placeholder" class="workspace flex-1 min-h-0 flex items-center justify-center text-center px-4">
           Workspace reserved for script execution and technical indicator overlays
+        </div>
+
+        <!-- Discretionary: this player's own fills, lot size and per-trade PnL -->
+        <div id="trade-history-panel" class="hidden flex-1 min-h-0 flex flex-col">
+          <div class="grid grid-cols-[1fr_1fr_1fr_1fr] px-1.5 pb-1 mb-1 shrink-0 text-[10.5px] t-faint">
+            <span>Time</span><span>Side / Qty</span><span class="text-right">Price</span><span class="text-right">Trade PnL</span>
+          </div>
+          <div id="trade-history-list" class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5">
+            <div class="empty">No trades yet this session</div>
+          </div>
+        </div>
+
+        <!-- Algorithmic: this player's script status + every algo action in the room -->
+        <div id="algo-log-panel" class="hidden flex-1 min-h-0 flex flex-col">
+          <div id="algo-status-strip" class="hidden flex items-center gap-2 mb-2 shrink-0"></div>
+          <div id="algo-log-list" class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5">
+            <div class="empty">No algorithmic actions yet</div>
+          </div>
         </div>
       </section>
 
@@ -656,7 +839,10 @@
         <div id="go-rank-list" class="space-y-1.5 max-h-60 overflow-y-auto pr-1"></div>
       </div>
 
-      <button id="btn-back-to-menu" class="btn btn-primary btn-lg">Back to menu</button>
+      <div class="space-y-2">
+        <button id="btn-edit-strategy" class="hidden btn btn-gold btn-lg">Improve strategy &amp; play again</button>
+        <button id="btn-back-to-menu" class="btn btn-primary btn-lg">Back to menu</button>
+      </div>
     </div>
   </div>
 
