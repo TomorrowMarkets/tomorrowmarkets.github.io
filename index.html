@@ -337,6 +337,18 @@
     .algo-status-dot.is-ready { background: var(--bid); }
     .algo-status-dot.is-error { background: var(--ask); }
     .algo-status-dot.is-running { background: var(--gold); }
+
+    /* Live PnL for every trader in the room */
+    .algo-standings { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+    .algo-standing {
+      display: inline-flex; align-items: baseline; gap: 6px; flex: 0 0 auto; white-space: nowrap;
+      font-size: 11.5px; padding: 5px 9px; border-radius: 9px;
+      background: rgba(255, 255, 255, 0.72); border: 1px solid var(--line);
+    }
+    .algo-standing.is-me { border-color: var(--gold); background: #fff; }
+    .algo-standing .rank { color: var(--faint); font-variant-numeric: tabular-nums; }
+    .algo-standing .who { color: var(--ink); font-weight: 600; }
+    .algo-standing .pnl { font-weight: 600; font-variant-numeric: tabular-nums; }
     .algo-log-text { display: block; margin-top: 1px; white-space: pre-wrap; word-break: break-word; }
 
     /* Algorithmic games: the strategy trades, so the manual ticket is locked */
@@ -795,6 +807,7 @@
         <!-- Algorithmic: this player's script status + every algo action in the room -->
         <div id="algo-log-panel" class="hidden flex-1 min-h-0 flex flex-col">
           <div id="algo-status-strip" class="hidden flex items-center gap-2 mb-2 shrink-0"></div>
+          <div id="algo-standings" class="hidden algo-standings shrink-0 mb-2"></div>
           <div id="algo-log-list" class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5">
             <div class="empty">No algorithmic actions yet</div>
           </div>
