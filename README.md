@@ -15,7 +15,7 @@ Features.
 ~~11. Improved bot behaviours, Correct bot behaviours again, setup random periods of participation and another 3 bot behaviours.~~ \
 ~~12. Lobby UI, leaderboard, beginning of setup for multiple games.~~ \
 ~~13. Features, indicators, basic signals~~ \
-14. RL bot \
+~~14. RL bot~~ \
 15. Python, pinescript, R, TMRWUSERLANGUAGE \
 16. Different game modes \
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
@@ -23,5 +23,10 @@ Features.
 --- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) 
 
 
-https://jpsdqawilipmsineoufz.supabase.co
+## Leaderboard keys
+https://jpsdqawilipmsineoufz.supabase.co\
 sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ
+
+## Bot keys
+https://iwmqwqguisduqwnsdbyj.supabase.co\
+sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW
