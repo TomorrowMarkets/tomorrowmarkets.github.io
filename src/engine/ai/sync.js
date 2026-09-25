@@ -9,8 +9,8 @@
 // uploads switched off (the AI still learns live in each game).
 
 export const AI_SYNC = {
-  supabaseUrl: '',  // e.g. 'https://abcdefghijklm.supabase.co'
-  anonKey: '',      // Project settings -> API -> anon public key
+  supabaseUrl: 'https://iwmqwqguisduqwnsdbyj.supabase.co',  // e.g. 'https://abcdefghijklm.supabase.co'
+  anonKey: 'sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW',      // Project settings -> API -> anon public key
   table: 'ai_experience'
 };
 
