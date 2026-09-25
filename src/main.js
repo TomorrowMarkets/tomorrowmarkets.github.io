@@ -1743,7 +1743,7 @@ function initApp() {
     if (orderEntryPanel) orderEntryPanel.classList.toggle('algo-locked', isAlgo);
     if (orderEntryNote) orderEntryNote.classList.toggle('hidden', !isAlgo);
     tradeHistoryUI.reset();
-    algoActionLog.reset();
+    algoActionLog.reset(isAlgo);
     if (isAlgo && algoRunner) {
       eventBus.emit('ALGO_STATUS', { playerId: currentUserId, language: algoRunner.language, status: algoRunner.status });
     }
@@ -1854,7 +1854,11 @@ function initApp() {
       asks: orderBook.levels('SELL', BOOK_LEVELS),
       traders: gameLoop.fleet.size + ledger.ids().filter((id) => id !== AI_ID).length,
       playerOrders: collectHumanOrders(),
-      brackets: brackets.byPlayer()
+      brackets: brackets.byPlayer(),
+      // Every trader's running PnL, best first, so the strategy panel can
+      // show the room's standings live instead of only at the closing bell.
+      standings: ledger.standings(orderBook.getMidPrice())
+        .map((st) => (st.id === AI_ID ? { ...st, name: AI_NAME, isAI: true } : st))
     };
     eventBus.emit('TICK', { ...payload, priceHistory: gameLoop.priceHistory });
     if (role === 'host') peerNetwork.broadcast({ type: 'SYNC_TICK', payload });
