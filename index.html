@@ -6,6 +6,16 @@
   <title>Tomorrow Markets | The frontier in simulated markets</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 
+  <!-- Apply the saved layout before first paint, so a dark layout never
+       flashes white. The key matches THEME_KEY in src/ui/theme.js. -->
+  <script>
+    try {
+      var t = localStorage.getItem('tomorrowMarkets.theme');
+      if (t === 'black' || t === 'navy') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* storage blocked: stay on the white layout */ }
+  </script>
+  <link rel="stylesheet" href="assets/themes.css">
+
   <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
@@ -30,27 +40,10 @@
 
   <style>
     /* ================================================================
-       THEME TOKENS: change the look of the whole game from here.
+       THEME TOKENS live in assets/themes.css (White, Black, Navy blue).
+       Everything below uses them, so no colours are hardcoded here.
        ================================================================ */
-    :root {
-      --paper: #F6F8FB;
-      --ink: #0B1D47;          /* brand navy */
-      --ink-soft: #2A3B63;
-      --muted: #5A6B88;
-      --faint: #8C99B0;
-      --brand: #156082;        /* logo teal */
-      --gold: #B08D3C;
-      --gold-ink: #8A6A1F;     /* gold for text: readable on white */
-      --gold-tint: rgba(176, 141, 60, 0.16);
-      --bid: #0F8A5F;
-      --bid-tint: rgba(15, 138, 95, 0.11);
-      --ask: #C23B32;
-      --ask-tint: rgba(194, 59, 50, 0.10);
-      --line: rgba(11, 29, 71, 0.08);
-      --line-strong: rgba(11, 29, 71, 0.15);
-      --glass: rgba(255, 255, 255, 0.62);
-      --radius: 14px;
-    }
+    :root { --radius: 14px; }
 
     html, body { height: 100%; }
     .hidden { display: none !important; } /* screen toggles must win over component display rules */
@@ -59,11 +52,7 @@
       font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
       user-select: none;
       -webkit-font-smoothing: antialiased;
-      background:
-        radial-gradient(60rem 40rem at 0% 0%, rgba(21, 96, 130, 0.09), transparent 62%),
-        radial-gradient(52rem 36rem at 100% 100%, rgba(176, 141, 60, 0.13), transparent 62%),
-        radial-gradient(rgba(11, 29, 71, 0.075) 1px, transparent 1.3px) 0 0 / 18px 18px,
-        var(--paper);
+      background: var(--body-bg);
     }
     input { user-select: text; }
     .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'cv11' 1; }
@@ -72,7 +61,7 @@
 
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(11, 29, 71, 0.16); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(var(--shade), 0.16); border-radius: 3px; }
 
     :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
@@ -89,8 +78,8 @@
       background: var(--glass);
       -webkit-backdrop-filter: blur(16px) saturate(150%);
       backdrop-filter: blur(16px) saturate(150%);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      box-shadow: 0 0 0 1px var(--line), 0 14px 34px -24px rgba(11, 29, 71, 0.35);
+      border: 1px solid var(--glass-edge);
+      box-shadow: 0 0 0 1px var(--line), 0 14px 34px -24px rgba(var(--shadow-rgb), 0.35);
       border-radius: var(--radius);
     }
     .panel-title { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em; }
@@ -98,14 +87,14 @@
     .sublabel { font-size: 11px; font-weight: 500; color: var(--muted); }
     .count {
       font-size: 10px; min-width: 18px; text-align: center; padding: 1px 5px; border-radius: 999px;
-      background: rgba(11, 29, 71, 0.06); color: var(--muted); font-variant-numeric: tabular-nums;
+      background: rgba(var(--shade), 0.06); color: var(--muted); font-variant-numeric: tabular-nums;
     }
     .empty { font-size: 11px; color: var(--faint); padding: 2px 0; }
 
     /* ---- Form controls --------------------------------------------- */
     .label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 4px; }
     .field {
-      width: 100%; background: rgba(255, 255, 255, 0.86); color: var(--ink);
+      width: 100%; background: var(--field); color: var(--ink);
       border: 1px solid var(--line-strong); border-radius: 9px; padding: 7px 10px; font-size: 13px;
       font-variant-numeric: tabular-nums; transition: border-color .15s, box-shadow .15s;
     }
@@ -124,46 +113,51 @@
     .btn-lg { padding: 12px 16px; width: 100%; }
     .btn:active { transform: translateY(1px); }
     .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
-    .btn-primary { background: var(--ink); color: #fff; }
-    .btn-primary:hover { background: #142C63; }
-    .btn-ghost { background: rgba(255, 255, 255, 0.7); color: var(--ink); border: 1px solid var(--line-strong); }
-    .btn-ghost:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
-    .btn-gold { background: var(--gold); color: #fff; }
-    .btn-gold:hover { background: #9E7E33; }
-    .btn-buy { background: var(--bid); color: #fff; }
-    .btn-buy:hover { background: #0C7852; }
-    .btn-sell { background: var(--ask); color: #fff; }
-    .btn-sell:hover { background: #AB322A; }
+    .btn-primary { background: var(--primary); color: var(--on-accent); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-ghost { background: var(--ghost); color: var(--ink); border: 1px solid var(--line-strong); }
+    .btn-ghost:hover { border-color: var(--line-hover); background: var(--ghost-hover); }
+    .btn-gold { background: var(--gold); color: var(--on-accent); }
+    .btn-gold:hover { background: color-mix(in srgb, var(--gold) 88%, var(--hover-mix)); }
+    .btn-buy { background: var(--bid-fill); color: #fff; }
+    .btn-buy:hover { background: color-mix(in srgb, var(--bid-fill) 88%, var(--hover-mix)); }
+    .btn-sell { background: var(--ask-fill); color: #fff; }
+    .btn-sell:hover { background: color-mix(in srgb, var(--ask-fill) 88%, var(--hover-mix)); }
+    /* Square icon button (settings, random name) */
+    .btn-icon { padding: 0; width: 36px; min-height: 36px; flex-shrink: 0; }
+    .btn-icon svg { width: 18px; height: 18px; }
+    .btn-icon-sm { width: 32px; min-height: 32px; border-radius: 9px; }
+    .btn-icon-sm svg { width: 16px; height: 16px; }
 
     .mini {
       font-size: 10.5px; font-weight: 500; line-height: 1.4; padding: 1px 7px; border-radius: 6px; cursor: pointer;
-      background: #fff; color: var(--ink); border: 1px solid var(--line-strong); transition: all .12s;
+      background: var(--raised); color: var(--ink); border: 1px solid var(--line-strong); transition: all .12s;
     }
-    .mini:hover { border-color: rgba(11, 29, 71, 0.35); }
-    .mini-danger { color: var(--ask); border-color: rgba(194, 59, 50, 0.3); }
-    .mini-danger:hover { background: var(--ask); border-color: var(--ask); color: #fff; }
-    .mini-primary { background: var(--ink); border-color: var(--ink); color: #fff; }
-    .mini-primary:hover { background: #142C63; }
+    .mini:hover { border-color: var(--line-hover); }
+    .mini-danger { color: var(--ask); border-color: color-mix(in srgb, var(--ask) 30%, transparent); }
+    .mini-danger:hover { background: var(--ask-fill); border-color: var(--ask-fill); color: #fff; }
+    .mini-primary { background: var(--primary); border-color: var(--primary); color: var(--on-accent); }
+    .mini-primary:hover { background: var(--primary-hover); }
 
     /* Segmented controls (order type, chart timeframe) */
-    .seg { background: rgba(11, 29, 71, 0.055); border-radius: 10px; padding: 3px; gap: 2px; }
+    .seg { background: rgba(var(--shade), 0.055); border-radius: 10px; padding: 3px; gap: 2px; }
     .seg-btn {
       font-size: 12px; font-weight: 500; color: var(--muted); border-radius: 7px; padding: 4px 10px; cursor: pointer;
       transition: background-color .15s, color .15s;
     }
     .seg-btn:hover { color: var(--ink); }
-    .seg-btn.is-active { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 29, 71, 0.12), 0 0 0 1px var(--line); }
+    .seg-btn.is-active { background: var(--raised); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(var(--shadow-rgb), 0.12), 0 0 0 1px var(--line); }
 
     /* Chips */
     .chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px; letter-spacing: 0.02em; }
     .chip-buy { color: var(--bid); background: var(--bid-tint); }
     .chip-sell { color: var(--ask); background: var(--ask-tint); }
-    .chip-neutral { color: var(--muted); background: rgba(11, 29, 71, 0.06); font-weight: 500; }
+    .chip-neutral { color: var(--muted); background: rgba(var(--shade), 0.06); font-weight: 500; }
     .chip-gold { color: var(--gold-ink); background: var(--gold-tint); }
 
     /* Rows in working orders, SL/TP, lobby and rankings */
     .row-card {
-      background: rgba(255, 255, 255, 0.74); border: 1px solid var(--line); border-radius: 9px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 9px;
       padding: 6px 8px; font-size: 11.5px;
     }
     .row-card-roomy { padding: 8px 12px; }
@@ -173,17 +167,17 @@
 
     /* ---- Header ----------------------------------------------------- */
     .topbar {
-      background: rgba(255, 255, 255, 0.55);
+      background: var(--topbar);
       -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--line);
     }
     .wordmark { font-family: 'Source Serif 4', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
     .clock {
       font-size: 12.5px; font-weight: 600; color: var(--ink); padding: 3px 10px; border-radius: 8px;
-      background: rgba(255, 255, 255, 0.8); border: 1px solid rgba(176, 141, 60, 0.55);
+      background: var(--card); border: 1px solid rgba(var(--gold-rgb), 0.55);
     }
-    .progress-track { background: rgba(11, 29, 71, 0.08); border-radius: 999px; overflow: hidden; }
-    .progress-fill { background: linear-gradient(90deg, #C9A85A, var(--gold)); height: 100%; border-radius: 999px; }
+    .progress-track { background: rgba(var(--shade), 0.08); border-radius: 999px; overflow: hidden; }
+    .progress-fill { background: linear-gradient(90deg, var(--gold-soft), var(--gold)); height: 100%; border-radius: 999px; }
 
     /* ---- Trading layout ----------------------------------------------
        Chart and order book sit on top of the indicator workspace, which
@@ -247,27 +241,27 @@
     /* ---- Chart tools, legend and indicator editor -------------------- */
     .chart-tool {
       font-size: 12px; font-weight: 500; color: var(--muted); border-radius: 10px; padding: 7px 11px; cursor: pointer;
-      background: rgba(11, 29, 71, 0.055); transition: color .15s, background-color .15s;
+      background: rgba(var(--shade), 0.055); transition: color .15s, background-color .15s;
     }
-    .chart-tool:hover, .chart-tool[aria-expanded="true"] { color: var(--ink); background: rgba(11, 29, 71, 0.08); }
+    .chart-tool:hover, .chart-tool[aria-expanded="true"] { color: var(--ink); background: rgba(var(--shade), 0.08); }
     .chart-menu {
       position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 19rem; padding: 6px;
-      background: rgba(255, 255, 255, 0.97); border-radius: 12px;
-      box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(11, 29, 71, 0.5);
+      background: var(--menu); border-radius: 12px;
+      box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(var(--shadow-rgb), 0.5);
     }
     .cm-group { font-size: 11px; color: var(--faint); padding: 6px 9px 2px; }
     .chart-menu-item { display: block; width: 100%; text-align: left; padding: 6px 9px; border-radius: 8px; cursor: pointer; }
-    .chart-menu-item:hover:not(:disabled), .chart-menu-item:focus-visible { background: rgba(11, 29, 71, 0.05); outline: none; }
+    .chart-menu-item:hover:not(:disabled), .chart-menu-item:focus-visible { background: rgba(var(--shade), 0.05); outline: none; }
     .chart-menu-item:disabled { opacity: .45; cursor: not-allowed; }
     .cm-name { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink); }
     .cm-hint { display: block; font-size: 11px; line-height: 1.35; color: var(--muted); margin-top: 1px; }
     .cm-check { position: relative; padding-right: 34px; }
     .cm-check::after {
       content: ""; position: absolute; right: 10px; top: 50%; width: 16px; height: 16px; margin-top: -8px; border-radius: 5px;
-      border: 1px solid var(--line-strong); background: #fff;
+      border: 1px solid var(--line-strong); background: var(--raised);
     }
     .cm-check[aria-checked="true"]::after {
-      border-color: var(--ink); background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+      border-color: var(--primary); background: var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
     }
     .chart-menu-rule { border-top: 1px solid var(--line); margin: 5px 4px; }
 
@@ -276,16 +270,16 @@
       display: flex; flex-direction: column; align-items: flex-start; gap: 2px; font-size: 11px;
     }
     .cl-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; border-radius: 6px; padding: 1px 2px; }
-    .cl-ohlc { gap: 9px; background: rgba(255, 255, 255, 0.72); padding: 1px 5px; font-variant-numeric: tabular-nums; }
+    .cl-ohlc { gap: 9px; background: var(--legend-bg); padding: 1px 5px; font-variant-numeric: tabular-nums; }
     .cl-ohlc .k, .cl-time { color: var(--faint); }
     .cl-ohlc .v { font-weight: 600; }
     .cl-name {
       pointer-events: auto; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-      font-weight: 600; color: var(--ink); background: rgba(255, 255, 255, 0.78); border-radius: 5px; padding: 0 5px;
+      font-weight: 600; color: var(--ink); background: var(--legend-bg); border-radius: 5px; padding: 0 5px;
     }
     .cl-name::before { content: ""; width: 10px; height: 2.5px; border-radius: 2px; background: var(--c); }
     .cl-name:hover { box-shadow: 0 0 0 1px var(--line-strong); }
-    .cl-val { color: var(--c); font-weight: 600; font-variant-numeric: tabular-nums; background: rgba(255, 255, 255, 0.72); border-radius: 4px; padding: 0 3px; }
+    .cl-val { color: var(--c); font-weight: 600; font-variant-numeric: tabular-nums; background: var(--legend-bg); border-radius: 4px; padding: 0 3px; }
     .cl-x {
       pointer-events: auto; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px;
       color: var(--faint); font-size: 13px; line-height: 1; cursor: pointer;
@@ -293,7 +287,7 @@
     .cl-x:hover { color: var(--ask); background: var(--ask-tint); }
     .chart-editor {
       position: absolute; z-index: 25; width: 15rem; padding: 10px 12px 12px; border-radius: 12px;
-      background: rgba(255, 255, 255, 0.97); box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(11, 29, 71, 0.5);
+      background: var(--menu); box-shadow: 0 0 0 1px var(--line), 0 20px 44px -22px rgba(var(--shadow-rgb), 0.5);
       display: flex; flex-direction: column; gap: 8px;
     }
     .ce-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
@@ -303,16 +297,16 @@
 
     .workspace {
       border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--faint); font-size: 12px;
-      background: radial-gradient(rgba(176, 141, 60, 0.22) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(255, 255, 255, 0.45);
+      background: radial-gradient(rgba(var(--gold-rgb), 0.22) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--card-soft);
     }
 
     /* ---- Mode select (discretionary / algorithmic) -------------------- */
     .mode-option {
       display: block; width: 100%; text-align: left; padding: 14px 16px; border-radius: 12px;
-      background: rgba(255, 255, 255, 0.7); border: 1px solid var(--line-strong); cursor: pointer;
+      background: var(--ghost); border: 1px solid var(--line-strong); cursor: pointer;
       transition: border-color .15s, background-color .15s, transform .05s;
     }
-    .mode-option:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
+    .mode-option:hover { border-color: var(--line-hover); background: var(--ghost-hover); }
     .mode-option:active { transform: translateY(1px); }
     .mode-option-title { display: block; font-size: 14px; font-weight: 600; color: var(--ink); }
     .mode-option-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -321,7 +315,7 @@
     .algo-console {
       max-height: 8rem; overflow-y: auto; padding: 8px 10px; border-radius: 8px; font-size: 11px;
       font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; white-space: pre-wrap;
-      background: rgba(11, 29, 71, 0.04); border: 1px solid var(--line);
+      background: rgba(var(--shade), 0.04); border: 1px solid var(--line);
     }
     .algo-console .line-error { color: var(--ask); }
     .algo-console .line-warn { color: var(--gold-ink); }
@@ -332,7 +326,7 @@
     }
 
     /* ---- Algo action log & status strip -------------------------------- */
-    .algo-status-strip { font-size: 11.5px; padding: 7px 9px; border-radius: 9px; background: rgba(11, 29, 71, 0.045); }
+    .algo-status-strip { font-size: 11.5px; padding: 7px 9px; border-radius: 9px; background: rgba(var(--shade), 0.045); }
     .algo-status-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
     .algo-status-dot.is-ready { background: var(--bid); }
     .algo-status-dot.is-error { background: var(--ask); }
@@ -343,9 +337,9 @@
     .algo-standing {
       display: inline-flex; align-items: baseline; gap: 6px; flex: 0 0 auto; white-space: nowrap;
       font-size: 11.5px; padding: 5px 9px; border-radius: 9px;
-      background: rgba(255, 255, 255, 0.72); border: 1px solid var(--line);
+      background: var(--card); border: 1px solid var(--line);
     }
-    .algo-standing.is-me { border-color: var(--gold); background: #fff; }
+    .algo-standing.is-me { border-color: var(--gold); background: var(--raised); }
     .algo-standing .rank { color: var(--faint); font-variant-numeric: tabular-nums; }
     .algo-standing .who { color: var(--ink); font-weight: 600; }
     .algo-standing .pnl { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -359,10 +353,10 @@
     }
 
     /* ---- Lobby -------------------------------------------------------- */
-    .lobby { background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%); }
+    .lobby { background: var(--lobby-bg); }
     .lobby-dots {
       position: absolute; inset: 0; pointer-events: none;
-      background: radial-gradient(rgba(11, 29, 71, 0.11) 1px, transparent 1.3px) 0 0 / 22px 22px;
+      background: radial-gradient(var(--dots) 1px, transparent 1.3px) 0 0 / 22px 22px;
       -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
       mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
     }
@@ -370,13 +364,13 @@
     .statement {
       font-family: 'Source Serif 4', Georgia, serif; font-weight: 300; color: var(--ink);
       font-size: clamp(2.75rem, 6.2vw, 5.5rem); line-height: 1.02; letter-spacing: -0.025em;
-      text-shadow: 0 0 28px rgba(246, 248, 251, 0.95), 0 0 2px rgba(246, 248, 251, 0.9);
+      text-shadow: 0 0 28px var(--statement-glow), 0 0 2px var(--statement-glow);
     }
     .lobby-card {
-      background: rgba(255, 255, 255, 0.58);
+      background: var(--lobby-card);
       -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.85);
-      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(11, 29, 71, 0.45);
+      border: 1px solid var(--glass-edge);
+      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(var(--shadow-rgb), 0.45);
       border-radius: 18px;
     }
     .divider-label { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); }
@@ -387,16 +381,17 @@
     /* ---- Toasts ------------------------------------------------------- */
     .toast {
       pointer-events: auto; max-width: 22rem; padding: 9px 12px; border-radius: 10px; font-size: 12px; color: var(--ink);
-      background: rgba(255, 255, 255, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-      box-shadow: 0 0 0 1px var(--line), 0 12px 28px -16px rgba(11, 29, 71, 0.4);
+      background: var(--menu); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      box-shadow: 0 0 0 1px var(--line), 0 12px 28px -16px rgba(var(--shadow-rgb), 0.4);
       border-left: 3px solid var(--faint); transition: opacity .3s;
     }
     .toast-success { border-left-color: var(--bid); }
     .toast-warn { border-left-color: var(--gold); }
     .toast-error { border-left-color: var(--ask); }
-    .toast-news { border-left-color: var(--gold); background: rgba(255, 252, 244, 0.94); }
+    .toast-news { border-left-color: var(--gold); background: var(--toast-news); }
 
     /* ---- Score screen ------------------------------------------------- */
+    .overlay { background: var(--overlay); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
     .go-pnl { font-family: 'Source Serif 4', Georgia, serif; font-weight: 400; font-size: 3rem; line-height: 1.05; letter-spacing: -0.02em; }
 
     /* Compact tier for short windows (e.g. laptops at 125% scaling): tighter
@@ -416,8 +411,9 @@
 </head>
 <body class="h-screen w-screen overflow-hidden flex flex-col">
 
-  <!-- Toast Notification Container -->
-  <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+  <!-- Toast Notification Container: starts below the header so toasts never
+       cover the Settings or Leaderboard buttons -->
+  <div id="toast-container" class="fixed top-[4.5rem] right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
   <!-- ================================================================
        LOBBY & START SCREEN
@@ -430,7 +426,10 @@
       <header class="px-8 md:px-14 pt-7 flex items-center gap-3 shrink-0">
         <img src="assets/logo.svg" alt="" class="w-8 h-8 rounded-[3px]" />
         <span class="wordmark text-[26px] leading-none">Tomorrow Markets</span>
-        <a href="leaderboard.html" class="btn btn-ghost ml-auto">Leaderboard</a>
+        <div class="ml-auto flex items-center gap-2">
+          <button type="button" class="btn btn-ghost btn-icon" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
+          <a href="leaderboard.html" class="btn btn-ghost">Leaderboard</a>
+        </div>
       </header>
 
       <main class="flex-1 min-h-0 overflow-y-auto px-8 md:px-14 py-8 grid lg:grid-cols-[minmax(0,1fr)_24rem] items-center gap-10">
@@ -441,7 +440,10 @@
           <div id="lobby-menu" class="lobby-card p-6 space-y-5">
             <div>
               <label for="trader-name-input" class="label">Trader handle</label>
-              <input type="text" id="trader-name-input" value="Trader_1" maxlength="16" class="field" />
+              <div class="flex gap-2">
+                <input type="text" id="trader-name-input" maxlength="16" autocomplete="nickname" spellcheck="false" placeholder="Pick a name" class="field flex-1 min-w-0" />
+                <button type="button" id="btn-shuffle-name" class="btn btn-ghost btn-icon" aria-label="Random name" title="Random name"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3.5" stroke="currentColor" stroke-width="1.6"/><circle cx="7.2" cy="7.2" r="1.25" fill="currentColor"/><circle cx="12.8" cy="12.8" r="1.25" fill="currentColor"/><circle cx="12.8" cy="7.2" r="1.25" fill="currentColor"/><circle cx="7.2" cy="12.8" r="1.25" fill="currentColor"/><circle cx="10" cy="10" r="1.25" fill="currentColor"/></svg></button>
+              </div>
             </div>
 
             <div class="grid grid-cols-2 gap-2.5">
@@ -528,7 +530,10 @@
         <span class="wordmark text-[18px] leading-none">Tomorrow Markets</span>
         <span class="chip chip-gold">Algorithmic</span>
       </div>
-      <button id="btn-algo-back" type="button" class="btn btn-ghost">Back</button>
+      <div class="flex items-center gap-2">
+        <button type="button" class="btn btn-ghost btn-icon btn-icon-sm" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
+        <button id="btn-algo-back" type="button" class="btn btn-ghost">Back</button>
+      </div>
     </header>
 
     <div class="flex-1 min-h-0 p-3 grid lg:grid-cols-[minmax(0,1fr)_21rem] gap-3 overflow-y-auto">
@@ -640,6 +645,7 @@
           <span>06:00 PM</span>
         </div>
         <span id="sim-clock" class="clock num">09:30:00 AM</span>
+        <button type="button" class="btn btn-ghost btn-icon btn-icon-sm" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
       </div>
     </header>
 
@@ -820,7 +826,7 @@
   <!-- ================================================================
        GAME OVER / SCORE SCREEN
        ================================================================ -->
-  <div id="game-over" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(246, 248, 251, 0.55); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);" role="dialog" aria-modal="true" aria-labelledby="go-title">
+  <div id="game-over" class="overlay hidden fixed inset-0 z-40 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="go-title">
     <div class="lobby-card max-w-md w-full p-7 space-y-5">
       <div class="text-center">
         <div class="flex items-center justify-center gap-2 mb-3">
