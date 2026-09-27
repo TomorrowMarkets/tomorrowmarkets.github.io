@@ -56,10 +56,14 @@ These patches have already been predetermined to be patch fix notes.
 
 
 ## Version 1.1 (planned)
+Here we want to add quality of life tweaks and basic gameplay tweaks.\
+It is our goal that the customer(player) feels as best about having the fun for it as possible.
 
 ### Scripting
 - Add Pine Script and MATLAB as supported languages for algorithmic trading
 - Designing a custom TMRW user language for Algorithmic trading, so it will be easier to slap ideas into the engine and go.
+- the update, save, upload, functions should be easy to deal with
+- The development overlay should be easier to deal with.
 
 ### New game modes
 - multiplayer, public lobby, mixed lobby with algorithmic trading designed and overhauled completely.
@@ -84,16 +88,26 @@ The combined and separate bot behaviours need another overhaul, this should be a
 - Added "switched hands" mode, for left handed players.
 
 ## Version 1.2 (future)
+
+
+### New game modes
+- The educated quant(development of "the Blind Quant") - have a analysis and development window for a while, than backtest and improve, than run your final idea on another day.
+- Historian backtest - Predetermined "map" datasets (OHLCV and L3)
+- The firm battle - Have access to an entire simulated market over a long period of time, trade every day and update your positions, than we will let you run it and battle others for a long time.
+- The Market - every day everyone gets to bit and run against each other.
+
+### Core Gameplay
 - Larger multiplayer lobbies (may require moving off GitHub Pages to your own infrastructure)
 - Performance optimisation; possible paid web domain
-- Mixed-mode matches
-- Predetermined "map" datasets (OHLCV and L3)
+- Mixed-mode matches (quant vs disc)
 
 ## Version 1.3 (future)
 
-### Core Gameplay modes
-- Multi-asset matches
-- Derivatives market matches
+### Core Gameplay
+- Multi-asset matches, Derivatives market matches
+- Adding on "pay for latency" ideas, "pay for orders" ideas, "FX costs" ideas and hardcore modes, where tax and trading costs are added?
+- Updating and optimising runtime functions, moving stuff out into c++ or C# to speed up the processes and more.
+- Setting up a dedicated server?
 
 ### Bot behaviour overhaul (again)
 We need to do an entire research study and bot overhaul from baseline. \ 
@@ -104,6 +118,8 @@ We want to add market events and let those impact the traders, rather than simpl
 
 ### User Experience
 - Added "keyboard mode", where each part of the discretionary website can be handled with keyboard only.
+- Added analytics to various game modes, such as sharpe, drawdown, graphs of equity, etc.
+- Setting up an achievement system?
 
 
 
