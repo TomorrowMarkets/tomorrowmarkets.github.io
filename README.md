@@ -40,6 +40,39 @@ c. Navy style, to keep another "cool" style which is somewhere in between
 20.
 
 
+
+
+
+
+
+
+
+
+# Version 1.
+
+
+# Version 1.1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Leaderboard keys
 https://jpsdqawilipmsineoufz.supabase.co \
 sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ
