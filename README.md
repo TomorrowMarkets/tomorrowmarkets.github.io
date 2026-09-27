@@ -1,8 +1,10 @@
 # tomorrowmarkets.github.io
 
-Features.
 
-~~1. Limit Orderbook visual~~ \
+
+# Version 1.
+- 15 level limit orderbook setup, order matching engine and bot behaviours, 
+- ~~1. Limit Orderbook visual~~ \
 ~~2. Multiplayer setup~~ \
 ~~3. Basic Bot behaviours~~ \
 ~~4. Externalised setup to update pieces separately~~ \
@@ -22,13 +24,23 @@ Features.
 a. Original white style
 b. Black style, to improve eyesight
 c. Navy style, to keep another "cool" style which is somewhere in between
-18. Update naming. 
-19. public lobbies.
-20. Different game modes \
+18. Update naming to be randomised, so all players don't show up as "trader_1", but can jump in at random if they desire.
+19. public lobbies. Having multiple random players join into lobbies, of 10 players returning repeatedly.
+
+# Version 1.0.1
+Any bugfixes
+
+# Version 1.0.2 and so on
+Any minor UI, ease of life, bugfixes and beyond. Small fry stuff.
+
+
+# Version 1.1
+- adding PineScript and MatLab to the supported script languages for Algorithmic Trading.
+- Different game modes \
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
 --- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
 --- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) \
-21. Correct bot behaviours again, again, again. \
+- Correct bot behaviours again, again, again. \
 --- A. US bot entry sets a complete drift, which can be exploited. \
 --- B. Last hour behaviour is essentially aggressively mean reverting. \
 --- C. open, close, high, low matches should be able to happen, we shouldn't keep seeing "high low, outside of candle". \
@@ -36,27 +48,16 @@ c. Navy style, to keep another "cool" style which is somewhere in between
 --- E. low participation should be a phenomenon. \
 --- F. Better probability distribution on US Open events, for flat, drift, jump and MR states. \
 --- G. Better closed of day behaviours, MR, Aggressive close, participation drops. \
-19.
-20.
 
+# Version 1.2
+- Adding larger multiplayer lobbies, might have to move the code from github into my desktop.
+- Adding better optimisation? Web domain if we can afford it?
+- Adding mixed matches?
+- Adding predetermined datasets for "maps" as OHLCV and L3 datasets on this.
 
-
-
-
-
-
-
-
-
-# Version 1.
-- 15 level limit orderbook setup, order matching engine and
-- 
-
-
-# Version 1.1
-
-
-
+# Version 1.3 
+- Multiple asset matches?
+- Derivatives market matches?
 
 
 
