@@ -12,6 +12,8 @@ import { buildSnapshot } from './engine/algo/AlgoAPI.js';
 import { AlgoLabUI } from './ui/AlgoLabUI.js';
 import { AlgoActionLogUI } from './ui/AlgoActionLogUI.js';
 import { TradeHistoryUI } from './ui/TradeHistoryUI.js';
+import { mountSettingsButtons, onThemeChange, themeColors } from './ui/theme.js';
+import { mountHandleField, rememberHandle } from './ui/player-name.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -74,9 +76,13 @@ function ordinal(n) {
 
 // Letters (incl. æøå), digits, space, dot, dash, underscore. Keeps handles safe and
 // guarantees nobody can collide with an internal bot id (those contain a colon).
+// cleanHandle returns '' when nothing usable is left; sanitizeHandle falls back.
+function cleanHandle(raw) {
+  return String(raw || '').replace(/[^\p{L}\p{N}_\- .]/gu, '').trim().slice(0, 16);
+}
+
 function sanitizeHandle(raw) {
-  const clean = String(raw || '').replace(/[^\p{L}\p{N}_\- .]/gu, '').trim().slice(0, 16);
-  return clean || 'Trader';
+  return cleanHandle(raw) || 'Trader';
 }
 
 // '' / null -> null (no level). Valid positive number -> rounded to cents. Anything else -> NaN.
@@ -1045,6 +1051,11 @@ class PathsBackground {
     this.raf = null;
     this.running = false;
     this.reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this.colors = themeColors();
+    onThemeChange(() => {
+      this.colors = themeColors();
+      if (!this.running && this.paths) this.drawFrame();
+    });
     this.onResize = () => {
       this.resize();
       if (!this.running) this.drawFrame();
@@ -1140,6 +1151,8 @@ class PathsBackground {
     ctx.clearRect(0, 0, w, h);
 
     const a = Math.max(0, this.alpha);
+    const ink = this.colors.shade;     // "r, g, b" of the crowd of paths
+    const lead = this.colors.goldRgb;  // "r, g, b" of the winning path
     const x0 = w * 0.035;
     const x1 = w * 1.02;
     const y0 = h * 0.8;   // fan starts low-left, beneath the statement, and rises toward the card
@@ -1157,12 +1170,12 @@ class PathsBackground {
 
     ctx.lineJoin = 'round';
     ctx.lineWidth = 1;
-    ctx.strokeStyle = `rgba(11, 29, 71, ${0.15 * a})`;
+    ctx.strokeStyle = `rgba(${ink}, ${0.15 * a})`;
     this.paths.forEach((ys, i) => {
       if (i !== this.leader) trace(ys);
     });
 
-    ctx.fillStyle = `rgba(11, 29, 71, ${0.3 * a})`;
+    ctx.fillStyle = `rgba(${ink}, ${0.3 * a})`;
     this.paths.forEach((ys, i) => {
       if (i === this.leader) return;
       ctx.beginPath();
@@ -1170,21 +1183,21 @@ class PathsBackground {
       ctx.fill();
     });
 
-    const lead = this.paths[this.leader];
+    const best = this.paths[this.leader];
     ctx.lineWidth = 2;
-    ctx.strokeStyle = `rgba(176, 141, 60, ${0.95 * a})`;
-    trace(lead);
-    ctx.fillStyle = `rgba(176, 141, 60, ${0.18 * a})`;
+    ctx.strokeStyle = `rgba(${lead}, ${0.95 * a})`;
+    trace(best);
+    ctx.fillStyle = `rgba(${lead}, ${0.18 * a})`;
     ctx.beginPath();
-    ctx.arc(X(upto), Y(lead[upto]), 9, 0, Math.PI * 2);
+    ctx.arc(X(upto), Y(best[upto]), 9, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = `rgba(176, 141, 60, ${a})`;
+    ctx.fillStyle = `rgba(${lead}, ${a})`;
     ctx.beginPath();
-    ctx.arc(X(upto), Y(lead[upto]), 3.2, 0, Math.PI * 2);
+    ctx.arc(X(upto), Y(best[upto]), 3.2, 0, Math.PI * 2);
     ctx.fill();
 
     // Common starting point: "today"
-    ctx.fillStyle = `rgba(11, 29, 71, ${0.55 * a})`;
+    ctx.fillStyle = `rgba(${ink}, ${0.55 * a})`;
     ctx.beginPath();
     ctx.arc(X(0), Y(0), 2.6, 0, Math.PI * 2);
     ctx.fill();
@@ -1532,6 +1545,13 @@ function initApp() {
   const lobbyPaths = new PathsBackground(document.getElementById('lobby-canvas'));
   lobbyPaths.start();
 
+  // Settings (layout: White / Black / Navy blue) and the saved trader handle
+  mountSettingsButtons();
+  mountHandleField(document.getElementById('trader-name-input'), {
+    shuffleButton: document.getElementById('btn-shuffle-name'),
+    clean: cleanHandle
+  });
+
   new BookUI(eventBus);
   new PriceChart(eventBus, getCurrentUserId, {
     originSecs: SESSION_OPEN_SECS,
@@ -1589,9 +1609,14 @@ function initApp() {
     }
   });
 
+  // The handle typed in the lobby, cleaned, and saved for the next visit.
+  // (A name the host changed to avoid a clash, e.g. "Mark_2", is never
+  // saved: that only ever lands in currentUserId, not the input.)
   function getTraderName() {
     const input = $('trader-name-input');
-    return sanitizeHandle(input ? input.value : '');
+    const name = sanitizeHandle(input ? input.value : '');
+    if (input && cleanHandle(input.value)) rememberHandle(name);
+    return name;
   }
 
   function renderPlayerList() {
@@ -2335,8 +2360,8 @@ function initApp() {
     sessionStorage.removeItem(REOPEN_LAB_KEY);
   } catch (err) { /* storage blocked */ }
   if (reopen) {
-    const nameInput = $('trader-name-input');
-    if (nameInput && reopen.handle) nameInput.value = reopen.handle;
+    // The lobby field already holds the saved handle (see mountHandleField),
+    // so reopen.handle isn't needed; it could be a clash-renamed "Name_2".
     sessionMode = 'algorithmic';
     pendingLaunch = { kind: 'solo', run: startSinglePlayer };
     openAlgoLab('Your last strategy is loaded. Test & enter starts a new single-player day; Back lets you host or join a room instead.');
