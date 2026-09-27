@@ -446,10 +446,18 @@
               </div>
             </div>
 
+            <button id="btn-public-game" class="btn btn-gold btn-lg w-full">
+              Join a public game
+              <span class="chip chip-neutral" style="background: rgba(255,255,255,0.18); color: inherit">Every 10 min</span>
+            </button>
+            <p class="text-[11px] t-faint text-center -mt-2.5">Discretionary, up to 20 traders. No room code needed.</p>
+
             <div class="grid grid-cols-2 gap-2.5">
               <button id="btn-single-player" class="btn btn-primary">Single player</button>
               <button id="btn-host-multiplayer" class="btn btn-ghost">Host multiplayer</button>
             </div>
+
+            <p id="lobby-status" class="hidden text-center text-xs t-muted animate-pulse"></p>
 
             <div class="divider-label">or join a room</div>
 
@@ -482,8 +490,8 @@
           <!-- Step 2: Waiting Room Lobby -->
           <div id="waiting-room" class="hidden lobby-card p-6 space-y-5">
             <div>
-              <h2 class="serif text-[28px] font-normal leading-tight t-ink">Waiting for players</h2>
-              <p class="text-xs t-muted mt-1">Share the room code with the traders you want to play against.</p>
+              <h2 id="waiting-title" class="serif text-[28px] font-normal leading-tight t-ink">Waiting for players</h2>
+              <p id="waiting-hint" class="text-xs t-muted mt-1">Share the room code with the traders you want to play against.</p>
             </div>
 
             <div class="row-card code-box">
