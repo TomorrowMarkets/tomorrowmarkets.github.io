@@ -108,7 +108,7 @@ const CSS = `
   padding: 18px 22px 20px;
   border: 1px solid var(--tm-facts-line);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--card, rgba(255, 255, 255, 0.6));
   color: var(--tm-facts-ink);
   font-family: var(--sans, 'Inter', system-ui, sans-serif);
   overflow: hidden;
@@ -138,12 +138,12 @@ const CSS = `
   place-items: center;
   border: 1px solid var(--tm-facts-line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--raised, #fff);
   color: var(--tm-facts-ink);
   cursor: pointer;
   padding: 0;
 }
-.tm-facts__btn:hover { border-color: #c9d1de; }
+.tm-facts__btn:hover { border-color: var(--line-hover, #c9d1de); }
 .tm-facts__btn:focus-visible,
 .tm-facts__more:focus-visible { outline: 2px solid var(--tm-facts-gold); outline-offset: 2px; }
 .tm-facts__btn svg { width: 14px; height: 14px; }
@@ -153,7 +153,7 @@ const CSS = `
   margin: 0;
   font-size: 14.5px;
   line-height: 1.6;
-  color: #33405c;
+  color: var(--ink-soft, #33405c);
 }
 .tm-facts__more {
   display: inline-block;
