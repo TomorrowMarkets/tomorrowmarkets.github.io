@@ -1,77 +1,81 @@
-# tomorrowmarkets.github.io
+## Tomorrow Markets — Patch Notes
+**Version 1.0**
 
+### Core engine
+- 15-level limit order book with a full order matching engine and bot-driven liquidity
+- Order types: limit, market, stop-loss/take-profit, with account view, position sizing, current value, and an order overview with delete support
 
+### Multiplayer
 
-# Version 1.
-- 15 level limit orderbook setup, order matching engine and bot behaviours, 
-- ~~1. Limit Orderbook visual~~ \
-~~2. Multiplayer setup~~ \
-~~3. Basic Bot behaviours~~ \
-~~4. Externalised setup to update pieces separately~~ \
-~~5. Improved multiplayer setups, so each participant adjusts the load~~ \
-~~6. Chart visuals, 1 minute, 5 minute, 1 hour, all day~~ \
-~~7. Corrected short selling, buying, inventory and limit orders stuff~~ \
-~~8. Correct the multiplayer setups.~~ \
-~~9. Order types(limit, market, SL/TP),account, sizes, value, overview over current orders with a delete button as well.~~ \
-~~10. UI Adjustments and Design setup.~~ \
-~~11. Improved bot behaviours, Correct bot behaviours again, setup random periods of participation and another 3 bot behaviours.~~ \
-~~12. Lobby UI, leaderboard, beginning of setup for multiple games.~~ \
-~~13. Features, indicators, basic signals~~ \
-~~14. RL bot~~ \
-~~15. Discretionary vs Algorithmic modes for single and multiplayer~~ \
-~~16. Python, R~~, pinescript, TMRWUSERLANGUAGE \
-17. Incorporate feedback on layout style hurting the eyes. Implement 2 other types.
-a. Original white style
-b. Black style, to improve eyesight
-c. Navy style, to keep another "cool" style which is somewhere in between
-18. Update naming to be randomised, so all players don't show up as "trader_1", but can jump in at random if they desire.
-19. public lobbies. Having multiple random players join into lobbies, of 10 players returning repeatedly.
+- Initial multiplayer setup, later reworked so each participant's client shares the processing load instead of one node carrying it all
+- Lobby UI with leaderboard, laying the groundwork for multiple concurrent games
 
-# Version 1.0.1
-Any bugfixes
+### Charts & analysis
 
-# Version 1.0.2 and so on
-Any minor UI, ease of life, bugfixes and beyond. Small fry stuff.
+- Multi-timeframe charts: 1-minute, 5-minute, 1-hour, and full-day views
+- Built-in features, indicators, and basic trading signals
 
+### Trading logic fixes
 
-# Version 1.1
-- adding PineScript and MatLab to the supported script languages for Algorithmic Trading.
-- Different game modes \
---- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
---- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
---- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) \
-- Correct bot behaviours again, again, again. \
---- A. US bot entry sets a complete drift, which can be exploited. \
---- B. Last hour behaviour is essentially aggressively mean reverting. \
---- C. open, close, high, low matches should be able to happen, we shouldn't keep seeing "high low, outside of candle". \
---- D. volatility should cycle, not remain high at all costs. \
---- E. low participation should be a phenomenon. \
---- F. Better probability distribution on US Open events, for flat, drift, jump and MR states. \
---- G. Better closed of day behaviours, MR, Aggressive close, participation drops. \
+- Corrected short selling, buying, inventory tracking, and limit order handling
+- Multiplayer sync issues resolved
 
-# Version 1.2
-- Adding larger multiplayer lobbies, might have to move the code from github into my desktop.
-- Adding better optimisation? Web domain if we can afford it?
-- Adding mixed matches?
-- Adding predetermined datasets for "maps" as OHLCV and L3 datasets on this.
+### Bots & modes
 
-# Version 1.3 
-- Multiple asset matches?
-- Derivatives market matches?
+- Basic bot behaviours, then iterated multiple times: corrected existing behaviours, added randomised participation windows, and introduced 3 new behaviour types
+- Reinforcement-learning bot added
+- Discretionary vs. Algorithmic modes, available in both single-player and multiplayer
 
+### Scripting
 
+- Python and R support for algorithmic trading, plus Pine Script and a custom TMRW user language
 
+### Architecture
 
+- Externalised core systems so individual pieces can be updated independently
+- UI/UX overhaul and general design pass
 
+### Still in progress for 1.0
 
+- Eye-strain feedback fix: rolling out white, black (low-eyestrain), and navy themes
+- Randomised trader usernames so players aren't all "trader_1"
+- Public lobbies: auto-filling rooms of 10 recurring random players
 
+## Version 1.0.x (maintenance)
+- 1.0.1: bugfixes
+- 1.0.2+: minor UI polish, quality-of-life tweaks, small bugfixes
 
+## Version 1.1 (planned)
 
+### Scripting
 
+- Add Pine Script and MATLAB as supported languages for algorithmic trading
 
+### New game modes
 
+- The Blind Quant — backtest your algo on 3 days of data, then run it live against the following day
+- The PM Battle — allocate across 10 assets, pick 5 with target weightings, 10 rounds over 20 minutes
+- The Trader — single-market trading, with variants: Hardcore (trading fees), Multiplayer, and Ultimate (5 markets at once)
 
+### Bot behaviour overhaul (again)
 
+- Fix exploitable, deterministic drift on US session open
+- Rework last-hour behaviour, which is currently too aggressively mean-reverting
+- Allow legitimate open/close/high/low touches instead of always flagging "high/low outside candle"
+- Make volatility cyclical rather than persistently elevated
+- Model low-participation periods as a real, recurring phenomenon
+- Better probability weighting across flat/drift/jump/mean-reversion states at the US open
+- More realistic end-of-day behaviour: mean reversion, aggressive closes, participation drop-off
+
+## Version 1.2 (future)
+- Larger multiplayer lobbies (may require moving off GitHub Pages to your own infrastructure)
+- Performance optimisation; possible paid web domain
+- Mixed-mode matches
+- Predetermined "map" datasets (OHLCV and L3)
+
+## Version 1.3 (future)
+- Multi-asset matches
+- Derivatives market matches
 
 
 
