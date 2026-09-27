@@ -18,11 +18,17 @@ Features.
 ~~14. RL bot~~ \
 ~~15. Discretionary vs Algorithmic modes for single and multiplayer~~ \
 ~~16. Python, R~~, pinescript, TMRWUSERLANGUAGE \
-17. Different game modes \
+17. Incorporate feedback on layout style hurting the eyes. Implement 2 other types.
+a. Original white style
+b. Black style, to improve eyesight
+c. Navy style, to keep another "cool" style which is somewhere in between
+18. Update naming. 
+19. public lobbies.
+20. Different game modes \
 --- A. The blind quant, backtest your algo on 3 days of data, run it against the 1 day after \
 --- B. The PM battle, run portfolio allocation on 10 different assets, pick 5, associated % holdings, 10 rounds, 20 minutes \
 --- C. The trader(1 market), The trader Hardcore(1 market trading fees), The Trader multiplayer(1 market, multiple players), The Trader Ultimate(5 markets) \
-18. Correct bot behaviours again, again, again. \
+21. Correct bot behaviours again, again, again. \
 --- A. US bot entry sets a complete drift, which can be exploited. \
 --- B. Last hour behaviour is essentially aggressively mean reverting. \
 --- C. open, close, high, low matches should be able to happen, we shouldn't keep seeing "high low, outside of candle". \
