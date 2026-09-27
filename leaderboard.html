@@ -6,6 +6,15 @@
   <title>Leaderboard | Tomorrow Markets</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 
+  <!-- Same layout as the game, applied before first paint (see src/ui/theme.js) -->
+  <script>
+    try {
+      var t = localStorage.getItem('tomorrowMarkets.theme');
+      if (t === 'black' || t === 'navy') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* storage blocked: stay on the white layout */ }
+  </script>
+  <link rel="stylesheet" href="assets/themes.css">
+
   <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -28,32 +37,14 @@
   </script>
 
   <style>
-    /* Same theme tokens as index.html, so this page reads as part of the site. */
-    :root {
-      --paper: #F6F8FB;
-      --ink: #0B1D47;
-      --ink-soft: #2A3B63;
-      --muted: #5A6B88;
-      --faint: #8C99B0;
-      --gold: #B08D3C;
-      --gold-ink: #8A6A1F;
-      --gold-tint: rgba(176, 141, 60, 0.16);
-      --bid: #0F8A5F;
-      --ask: #C23B32;
-      --line: rgba(11, 29, 71, 0.08);
-      --line-strong: rgba(11, 29, 71, 0.15);
-    }
+    /* Colours come from assets/themes.css, shared with the game. */
 
     html, body { min-height: 100%; }
     body {
       color: var(--ink);
       font-family: 'Inter', system-ui, 'Segoe UI', sans-serif;
       -webkit-font-smoothing: antialiased;
-      background:
-        radial-gradient(60rem 40rem at 0% 0%, rgba(21, 96, 130, 0.09), transparent 62%),
-        radial-gradient(52rem 36rem at 100% 100%, rgba(176, 141, 60, 0.13), transparent 62%),
-        radial-gradient(rgba(11, 29, 71, 0.075) 1px, transparent 1.3px) 0 0 / 18px 18px,
-        var(--paper);
+      background: var(--body-bg);
     }
     .serif { font-family: 'Source Serif 4', Georgia, serif; }
     .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'cv11' 1; }
@@ -66,7 +57,7 @@
 
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(11, 29, 71, 0.16); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(var(--shade), 0.16); border-radius: 3px; }
     :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
     .wordmark { font-family: 'Source Serif 4', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; color: var(--ink); }
@@ -77,35 +68,37 @@
       transition: background-color .15s, border-color .15s, color .15s, transform .05s; cursor: pointer;
     }
     .btn:active { transform: translateY(1px); }
-    .btn-ghost { background: rgba(255, 255, 255, 0.7); color: var(--ink); border: 1px solid var(--line-strong); }
-    .btn-ghost:hover { border-color: rgba(11, 29, 71, 0.35); background: #fff; }
+    .btn-ghost { background: var(--ghost); color: var(--ink); border: 1px solid var(--line-strong); }
+    .btn-ghost:hover { border-color: var(--line-hover); background: var(--ghost-hover); }
+    .btn-icon { padding: 0; width: 36px; min-height: 36px; flex-shrink: 0; }
+    .btn-icon svg { width: 18px; height: 18px; }
 
-    .lobby { background: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%); }
+    .lobby { background: var(--lobby-bg); }
     .lobby-dots {
       position: absolute; inset: 0; pointer-events: none;
-      background: radial-gradient(rgba(11, 29, 71, 0.11) 1px, transparent 1.3px) 0 0 / 22px 22px;
+      background: radial-gradient(var(--dots) 1px, transparent 1.3px) 0 0 / 22px 22px;
       -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
       mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.7) 45%, #000 100%);
     }
     .lobby-card {
-      background: rgba(255, 255, 255, 0.58);
+      background: var(--lobby-card);
       -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.85);
-      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(11, 29, 71, 0.45);
+      border: 1px solid var(--glass-edge);
+      box-shadow: 0 0 0 1px var(--line), 0 30px 60px -36px rgba(var(--shadow-rgb), 0.45);
       border-radius: 18px;
     }
 
-    .seg { background: rgba(11, 29, 71, 0.055); border-radius: 10px; padding: 3px; gap: 2px; display: inline-grid; }
+    .seg { background: rgba(var(--shade), 0.055); border-radius: 10px; padding: 3px; gap: 2px; display: inline-grid; }
     .seg-btn {
       font-size: 12.5px; font-weight: 500; color: var(--muted); border-radius: 7px; padding: 6px 14px; cursor: pointer;
       transition: background-color .15s, color .15s; border: none; background: transparent;
     }
     .seg-btn:hover { color: var(--ink); }
-    .seg-btn.is-active { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 29, 71, 0.12), 0 0 0 1px var(--line); }
+    .seg-btn.is-active { background: var(--raised); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(var(--shadow-rgb), 0.12), 0 0 0 1px var(--line); }
 
     .chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px; letter-spacing: 0.02em; }
     .chip-gold { color: var(--gold-ink); background: var(--gold-tint); }
-    .chip-neutral { color: var(--muted); background: rgba(11, 29, 71, 0.06); font-weight: 500; }
+    .chip-neutral { color: var(--muted); background: rgba(var(--shade), 0.06); font-weight: 500; }
 
     /* ---- Board table -------------------------------------------------- */
     .board-head, .board-row {
@@ -121,9 +114,9 @@
     .board-head > span:not(:first-child):not(:nth-child(2)) { text-align: right; }
     .board-row {
       padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.7); font-size: 12.5px;
+      background: var(--card); font-size: 12.5px;
     }
-    .board-row.is-me { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-tint); background: rgba(255, 255, 255, 0.92); }
+    .board-row.is-me { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-tint); background: var(--raised); }
     .board-rank { font-weight: 700; color: var(--ink); }
     .board-handle { font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 6px; min-width: 0; }
     .board-handle > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -152,7 +145,10 @@
       <header class="px-6 md:px-14 pt-7 flex items-center gap-3 shrink-0">
         <img src="assets/logo.svg" alt="" class="w-8 h-8 rounded-[3px]" />
         <span class="wordmark text-[22px] md:text-[26px] leading-none">Tomorrow Markets</span>
-        <a href="index.html" class="btn btn-ghost ml-auto">Back to game</a>
+        <div class="ml-auto flex items-center gap-2">
+          <button type="button" class="btn btn-ghost btn-icon" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
+          <a href="index.html" class="btn btn-ghost">Back to game</a>
+        </div>
       </header>
 
       <main class="flex-1 px-6 md:px-14 py-8 md:py-10 flex flex-col items-center">
@@ -184,6 +180,9 @@
 
   <script type="module">
     import { fetchLeaderboard, CATEGORIES } from './src/services/leaderboard-api.js';
+    import { mountSettingsButtons } from './src/ui/theme.js';
+
+    mountSettingsButtons();
 
     const tabs = document.querySelectorAll('.seg-btn[data-category]');
     const listEl = document.getElementById('board-list');
