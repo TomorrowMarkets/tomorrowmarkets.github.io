@@ -6,40 +6,36 @@
 - Order types: limit, market, stop-loss/take-profit, with account view, position sizing, current value, and an order overview with delete support
 
 ### Multiplayer
-
 - Initial multiplayer setup, later reworked so each participant's client shares the processing load instead of one node carrying it all
 - Lobby UI with leaderboard, laying the groundwork for multiple concurrent games
+- Public lobbies: auto-filling rooms of 10 recurring random players
 
 ### Charts & analysis
-
 - Multi-timeframe charts: 1-minute, 5-minute, 1-hour, and full-day views
 - Built-in features, indicators, and basic trading signals
+  - Simple moving averages, volume and beyond. 
 
 ### Trading logic fixes
-
 - Corrected short selling, buying, inventory tracking, and limit order handling
 - Multiplayer sync issues resolved
 
 ### Bots & modes
-
 - Basic bot behaviours, then iterated multiple times: corrected existing behaviours, added randomised participation windows, and introduced 3 new behaviour types
 - Reinforcement-learning bot added
 - Discretionary vs. Algorithmic modes, available in both single-player and multiplayer
 
 ### Scripting
-
-- Python and R support for algorithmic trading, plus Pine Script and a custom TMRW user language
+- Python and R support for algorithmic trading
 
 ### Architecture
-
 - Externalised core systems so individual pieces can be updated independently
-- UI/UX overhaul and general design pass
+- UI/UX overhaul and general design pass, added different layouts for original layout and 2 dark modes for ease on eyes.
 
-### Still in progress for 1.0
 
+### User experience
 - Eye-strain feedback fix: rolling out white, black (low-eyestrain), and navy themes
 - Randomised trader usernames so players aren't all "trader_1"
-- Public lobbies: auto-filling rooms of 10 recurring random players
+- Added "loading screen notes" for each player to have something silly to do while waiting.
 
 ## Version 1.0.x (maintenance)
 - 1.0.1: bugfixes
@@ -50,6 +46,7 @@
 ### Scripting
 
 - Add Pine Script and MATLAB as supported languages for algorithmic trading
+- , plus Pine Script and a custom TMRW user language
 
 ### New game modes
 
@@ -67,6 +64,9 @@
 - Better probability weighting across flat/drift/jump/mean-reversion states at the US open
 - More realistic end-of-day behaviour: mean reversion, aggressive closes, participation drop-off
 
+### User experience
+- Added "switched hands" mode, for left handed players.
+
 ## Version 1.2 (future)
 - Larger multiplayer lobbies (may require moving off GitHub Pages to your own infrastructure)
 - Performance optimisation; possible paid web domain
@@ -74,8 +74,13 @@
 - Predetermined "map" datasets (OHLCV and L3)
 
 ## Version 1.3 (future)
+
+### Core Gameplay modes
 - Multi-asset matches
 - Derivatives market matches
+
+### User Experience
+- Added "keyboard mode", where each part of the discretionary website can be handled with keyboard only.
 
 
 
