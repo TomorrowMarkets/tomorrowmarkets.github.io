@@ -12,17 +12,17 @@
 const STORAGE_KEY = 'tomorrowMarkets.handle';
 
 export const FIRST_PARTS = [
-  'Swift', 'Steady', 'Clever', 'Bold', 'Lucky', 'Quiet', 'Nimble', 'Brave',
-  'Sharp', 'Patient', 'Rapid', 'Golden', 'Cosmic', 'Savvy', 'Calm', 'Daring',
-  'Witty', 'Keen', 'Plucky', 'Crafty', 'Sunny', 'Stellar', 'Turbo', 'Mighty',
-  'Jolly', 'Zippy', 'Frosty', 'Bullish', 'Noble', 'Speedy', 'Wise', 'Lunar'
+  'Jane Street', 'JPM', 'Clever', 'Millennium', 'TwoSigma', 'Citadel', 'Investor', 'Brave',
+  'Sharp', 'Patient', 'BridgeWater', 'Golden', 'Cosmic', 'Renaissance', 'Option', 'Warren',
+  'Quant', 'Keen', 'Point72', 'Crafty', 'Sunstone', 'Stellar', 'Turbo', 'Mighty',
+  'Alpha', 'Lazarus', 'Goldman', 'Bullish', 'Noble', 'Money', 'Candle', 'Lunar'
 ];
 
 export const SECOND_PARTS = [
-  'Otter', 'Falcon', 'Heron', 'Fox', 'Lynx', 'Panda', 'Owl', 'Hawk',
-  'Badger', 'Beaver', 'Dolphin', 'Orca', 'Tiger', 'Bison', 'Raven', 'Koala',
-  'Gecko', 'Comet', 'Rocket', 'Trader', 'Broker', 'Quant', 'Bull', 'Bear',
-  'Ticker', 'Walrus', 'Puffin', 'Penguin', 'Jaguar', 'Lemur', 'Marlin', 'Meerkat'
+  'Capital', 'Falcon', 'Sigma', 'Simons', 'Buffett', 'Tech', 'Owl', 'Investment',
+  'Researcher', 'Banker', 'Dolphin', 'Orca', 'Tiger', 'Trade', 'Securities', 'God',
+  'Mngt', 'Comet', 'Rocket', 'Trader', 'Broker', 'Quant', 'Bull', 'Bear',
+  'Ticker', 'Whale', 'Analyst', 'Fund', 'Jaguar', 'Investor', 'Technologies', 'King'
 ];
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
