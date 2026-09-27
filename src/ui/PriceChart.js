@@ -15,6 +15,7 @@
 
 import { resample } from '../engine/bars.js';
 import { sma, ema, bollinger, rsi, macd, vwap } from '../engine/indicators.js';
+import { themeColors, onThemeChange } from './theme.js';
 
 const STORAGE_KEY = 'tm.chart.v1';
 const AXIS_W = 62;            // right-hand price scale
@@ -24,19 +25,46 @@ const MAX_OVERLAYS = 6;
 const MAX_PANES = 2;
 const FONT = '10.5px Inter, system-ui, sans-serif';
 
-const COLORS = {
-  ink: '#0B1D47',
-  muted: '#5A6B88',
-  faint: '#8C99B0',
-  grid: 'rgba(11, 29, 71, 0.06)',
-  rule: 'rgba(11, 29, 71, 0.12)',
-  gold: '#B08D3C',
-  up: '#0F8A5F',
-  down: '#C23B32',
-  upVol: 'rgba(15, 138, 95, 0.30)',
-  downVol: 'rgba(194, 59, 50, 0.28)'
-};
+// Canvas colours come from the active layout (assets/themes.css) and are
+// refreshed whenever the player switches layout in Settings.
+const COLORS = {};
+function loadColors() {
+  const t = themeColors();
+  const rgba = (rgb, a) => `rgba(${rgb}, ${a})`;
+  Object.assign(COLORS, {
+    ink: t.ink,
+    muted: t.muted,
+    faint: t.faint,
+    grid: rgba(t.shade, 0.06),
+    rule: rgba(t.shade, 0.12),
+    crosshair: rgba(t.shade, 0.35),
+    guide: rgba(t.shade, 0.18),
+    band: rgba(t.shade, 0.035),
+    gold: t.gold,
+    onGold: t.onAccent,
+    areaTop: rgba(t.goldRgb, 0.22),
+    areaBottom: rgba(t.goldRgb, 0),
+    lastLine: rgba(t.goldRgb, 0.6),
+    halo: rgba(t.goldRgb, 0.25),
+    up: t.bid,
+    down: t.ask,
+    upVol: rgba(t.bidRgb, 0.30),
+    downVol: rgba(t.askRgb, 0.28),
+    tag: t.tag,
+    tagText: t.tagText,
+    palette: t.palette
+  });
+}
+loadColors();
+
+// Indicators are saved with a colour from PALETTE (the White layout's).
+// Each layout has its own version of the palette, so the same indicator is
+// drawn in that layout's matching colour: see tone().
 const PALETTE = ['#B08D3C', '#156082', '#7B4FA0', '#C0612B', '#2E8B84', '#A23B72'];
+function tone(color) {
+  const i = PALETTE.indexOf(color);
+  return i >= 0 && COLORS.palette[i] ? COLORS.palette[i] : color;
+}
 // A second or third moving average starts at the next common length, so two
 // lines are ready for a crossover straight away.
 const COMMON_LENGTHS = { sma: [20, 50, 100, 200], ema: [9, 21, 50, 100] };
@@ -129,6 +157,7 @@ function labelFor(ind) {
 
 export class PriceChart {
   constructor(eventBus, getCurrentUserId, { originSecs, secsPerTick, totalTicks }) {
+    loadColors();
     this.getCurrentUserId = getCurrentUserId;
     this.originSecs = originSecs;
     this.secsPerTick = secsPerTick;
@@ -162,6 +191,11 @@ export class PriceChart {
     window.addEventListener('resize', () => this.requestDraw());
     document.addEventListener('visibilitychange', () => this.requestDraw());
     if (window.ResizeObserver && this.stage) new ResizeObserver(() => this.requestDraw()).observe(this.stage);
+    onThemeChange(() => {
+      loadColors();
+      this.renderLegend();
+      this.requestDraw();
+    });
   }
 
   // ---- settings -----------------------------------------------------------
@@ -360,7 +394,7 @@ export class PriceChart {
   renderLegend() {
     if (!this.legend) return;
     const row = (ind) => `
-      <div class="cl-row" data-uid="${ind.uid}" style="--c:${ind.color}">
+      <div class="cl-row" data-uid="${ind.uid}" style="--c:${tone(ind.color)}">
         <button type="button" class="cl-name" title="Change settings">${labelFor(ind)}</button>
         <span class="cl-val"></span>
         <button type="button" class="cl-x" aria-label="Remove ${labelFor(ind)}">&times;</button>
@@ -516,10 +550,10 @@ export class PriceChart {
     const orders = (data.playerOrders && data.playerOrders[me]) || [];
     const brackets = (data.brackets && data.brackets[me]) || [];
     this.levels = [
-      ...orders.map((o) => ({ price: o.price, color: COLORS.muted, label: `${o.side} ${o.qty}` })),
+      ...orders.map((o) => ({ price: o.price, color: 'muted', label: `${o.side} ${o.qty}` })),
       ...brackets.flatMap((b) => [
-        b.sl != null ? { price: b.sl, color: COLORS.down, label: 'SL' } : null,
-        b.tp != null ? { price: b.tp, color: COLORS.up, label: 'TP' } : null
+        b.sl != null ? { price: b.sl, color: 'down', label: 'SL' } : null,
+        b.tp != null ? { price: b.tp, color: 'up', label: 'TP' } : null
       ].filter(Boolean))
     ];
     this.recompute();
@@ -706,7 +740,7 @@ export class PriceChart {
     for (const ind of overlays) {
       if (ind.kind !== 'bb') continue;
       const s = this.series.get(ind.uid);
-      if (s) this.fillBand(ctx, s.upper, s.lower, start, n, xAt, yP, ind.color);
+      if (s) this.fillBand(ctx, s.upper, s.lower, start, n, xAt, yP, tone(ind.color));
     }
 
     // ---- price
@@ -732,8 +766,8 @@ export class PriceChart {
       }
     } else {
       const fill = ctx.createLinearGradient(0, pTop, 0, price.top + price.h);
-      fill.addColorStop(0, 'rgba(176, 141, 60, 0.22)');
-      fill.addColorStop(1, 'rgba(176, 141, 60, 0)');
+      fill.addColorStop(0, COLORS.areaTop);
+      fill.addColorStop(1, COLORS.areaBottom);
       ctx.beginPath();
       ctx.moveTo(xAt(start), price.top + price.h);
       for (let i = start; i < n; i++) ctx.lineTo(xAt(i), yP(bars[i].close));
@@ -758,12 +792,13 @@ export class PriceChart {
     for (const ind of overlays) {
       const s = this.series.get(ind.uid);
       if (!s) continue;
+      const c = tone(ind.color);
       if (ind.kind === 'bb') {
-        this.line(ctx, s.upper, start, n, xAt, yP, ind.color, 1);
-        this.line(ctx, s.lower, start, n, xAt, yP, ind.color, 1);
-        this.line(ctx, s.mid, start, n, xAt, yP, ind.color, 1, [3, 3]);
+        this.line(ctx, s.upper, start, n, xAt, yP, c, 1);
+        this.line(ctx, s.lower, start, n, xAt, yP, c, 1);
+        this.line(ctx, s.mid, start, n, xAt, yP, c, 1, [3, 3]);
       } else {
-        this.line(ctx, s.line, start, n, xAt, yP, ind.color, ind.kind === 'vwap' ? 1.5 : 1.5, ind.kind === 'vwap' ? [6, 3] : null);
+        this.line(ctx, s.line, start, n, xAt, yP, c, ind.kind === 'vwap' ? 1.5 : 1.5, ind.kind === 'vwap' ? [6, 3] : null);
       }
     }
 
@@ -772,7 +807,7 @@ export class PriceChart {
     const ly = lastY;
     ctx.save();
     ctx.setLineDash([2, 3]);
-    ctx.strokeStyle = 'rgba(176, 141, 60, 0.6)';
+    ctx.strokeStyle = COLORS.lastLine;
     ctx.beginPath();
     ctx.moveTo(0, Math.round(ly) + 0.5);
     ctx.lineTo(plotW, Math.round(ly) + 0.5);
@@ -780,7 +815,7 @@ export class PriceChart {
     ctx.restore();
     if (!candles) {
       const lx = xAt(n - 1);
-      ctx.fillStyle = 'rgba(176, 141, 60, 0.25)';
+      ctx.fillStyle = COLORS.halo;
       ctx.beginPath();
       ctx.arc(lx, ly, 7, 0, Math.PI * 2);
       ctx.fill();
@@ -796,20 +831,21 @@ export class PriceChart {
     for (const lv of this.levels) {
       if (lv.price < lo || lv.price > hi) continue;
       const y = Math.round(yP(lv.price)) + 0.5;
-      ctx.strokeStyle = lv.color;
+      const lvColor = COLORS[lv.color];
+      ctx.strokeStyle = lvColor;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(plotW, y);
       ctx.stroke();
       const text = `${lv.label} $${lv.price.toFixed(2)}`;
-      ctx.fillStyle = lv.color;
+      ctx.fillStyle = lvColor;
       ctx.textBaseline = 'bottom';
       ctx.fillText(text, plotW - ctx.measureText(text).width - 6, y - 3);
     }
     ctx.restore();
     ctx.restore(); // price pane clip
 
-    this.tag(ctx, plotW, ly, `$${last.close.toFixed(2)}`, COLORS.gold, '#fff');
+    this.tag(ctx, plotW, ly, `$${last.close.toFixed(2)}`, COLORS.gold, COLORS.onGold);
 
     // ---- indicator panes
     for (const pane of oscPanes) this.drawPane(ctx, pane, { W, plotW, start, n, xAt, bodyW });
@@ -820,7 +856,7 @@ export class PriceChart {
       const x = hoverIdx != null ? Math.round(xAt(hoverIdx)) + 0.5 : null;
       ctx.save();
       ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = 'rgba(11, 29, 71, 0.35)';
+      ctx.strokeStyle = COLORS.crosshair;
       ctx.beginPath();
       if (x != null) {
         ctx.moveTo(x, 0);
@@ -834,20 +870,20 @@ export class PriceChart {
 
       if (this.hover.y >= pTop - 10 && this.hover.y < price.h) {
         const v = hi - ((this.hover.y - pTop) / (pBottom - pTop)) * (hi - lo);
-        this.tag(ctx, plotW, this.hover.y, `$${v.toFixed(2)}`, COLORS.ink, '#fff');
+        this.tag(ctx, plotW, this.hover.y, `$${v.toFixed(2)}`, COLORS.tag, COLORS.tagText);
       } else {
         const pane = oscPanes.find((p) => this.hover.y >= p.top && this.hover.y < p.top + p.h);
-        if (pane && pane.scale) this.tag(ctx, plotW, this.hover.y, fmtValue(pane.scale.inv(this.hover.y), pane.ind.kind === 'rsi' ? 1 : 3), COLORS.ink, '#fff');
+        if (pane && pane.scale) this.tag(ctx, plotW, this.hover.y, fmtValue(pane.scale.inv(this.hover.y), pane.ind.kind === 'rsi' ? 1 : 3), COLORS.tag, COLORS.tagText);
       }
       if (x != null) {
         const tText = hhmm(bars[hoverIdx].t, span < 60);
         ctx.font = FONT;
         const tw = ctx.measureText(tText).width + 10;
         const tx = clamp(x - tw / 2, 0, plotW - tw);
-        ctx.fillStyle = COLORS.ink;
+        ctx.fillStyle = COLORS.tag;
         this.roundRect(ctx, tx, avail + 2, tw, TIME_H - 4, 4);
         ctx.fill();
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = COLORS.tagText;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(tText, tx + tw / 2, avail + TIME_H / 2 + 1);
@@ -911,7 +947,7 @@ export class PriceChart {
       const gy = Math.round(y(v)) + 0.5;
       ctx.save();
       ctx.setLineDash([3, 4]);
-      ctx.strokeStyle = 'rgba(11, 29, 71, 0.18)';
+      ctx.strokeStyle = COLORS.guide;
       ctx.beginPath();
       ctx.moveTo(0, gy);
       ctx.lineTo(plotW, gy);
@@ -922,10 +958,10 @@ export class PriceChart {
 
     const labels = [];
     if (ind.kind === 'rsi') {
-      ctx.fillStyle = 'rgba(11, 29, 71, 0.035)';
+      ctx.fillStyle = COLORS.band;
       ctx.fillRect(0, y(70), plotW, y(30) - y(70));
       labels.push(guide(70, '70'), guide(30, '30'));
-      this.line(ctx, s.line, start, n, xAt, y, ind.color, 1.5);
+      this.line(ctx, s.line, start, n, xAt, y, tone(ind.color), 1.5);
     } else {
       labels.push(guide(0, '0'));
       const zero = y(0);
@@ -936,7 +972,7 @@ export class PriceChart {
         const yv = y(v);
         ctx.fillRect(Math.round(xAt(i) - bodyW / 2), Math.min(zero, yv), Math.max(1, Math.round(bodyW)), Math.max(1, Math.abs(yv - zero)));
       }
-      this.line(ctx, s.macd, start, n, xAt, y, ind.color, 1.5);
+      this.line(ctx, s.macd, start, n, xAt, y, tone(ind.color), 1.5);
       this.line(ctx, s.signal, start, n, xAt, y, COLORS.faint, 1.25);
     }
     ctx.restore();
