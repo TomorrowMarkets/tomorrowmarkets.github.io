@@ -15,14 +15,18 @@ export const FIRST_PARTS = [
   'Jane Street', 'JPM', 'Clever', 'Millennium', 'TwoSigma', 'Citadel', 'Investor', 'Brave',
   'Sharp', 'Patient', 'BridgeWater', 'Golden', 'Cosmic', 'Renaissance', 'Option', 'Warren',
   'Quant', 'Keen', 'Point72', 'Crafty', 'Sunstone', 'Stellar', 'Turbo', 'Mighty',
-  'Alpha', 'Lazarus', 'Goldman', 'Bullish', 'Noble', 'Money', 'Candle', 'Lunar'
+  'Alpha', 'Lazarus', 'Goldman', 'Bullish', 'Noble', 'Money', 'Candle', 'Lunar', '',
+  'Market','Equity','Swaps','Derivatives','Arbitrage','Relative-Value','Returns', 'Trend',
+  'MeanRevert', 'Statistical', 'Mean Field'
 ];
 
 export const SECOND_PARTS = [
-  'Capital', 'Falcon', 'Sigma', 'Simons', 'Buffett', 'Tech', 'Owl', 'Investment',
+  'Capital', 'Falcon', 'Sigma', 'Simons', 'Buffett', 'Tech', 'Owl', 'Investments',
   'Researcher', 'Banker', 'Dolphin', 'Orca', 'Tiger', 'Trade', 'Securities', 'God',
   'Mngt', 'Comet', 'Rocket', 'Trader', 'Broker', 'Quant', 'Bull', 'Bear',
-  'Ticker', 'Whale', 'Analyst', 'Fund', 'Jaguar', 'Investor', 'Technologies', 'King'
+  'Ticker', 'Whale', 'Analyst', 'Fund', 'Jaguar', 'Investor', 'Technologies', 'King',
+  'Griffin','Maker','Equity','Markets','Returns', 'Broker','Rothschield','Assets',
+  'Advisors', 'Family Office', 'Partners', 'Gamers', 'Traders', 'Trading', 'Ltd'
 ];
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
