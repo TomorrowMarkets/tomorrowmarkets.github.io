@@ -5,6 +5,7 @@ import { TickAccumulator } from './engine/bars.js';
 import { PriceChart } from './ui/PriceChart.js';
 import { mountLobbyFacts } from './ui/lobby-facts.js';
 import { createRunTracker, isConfigured as leaderboardLive } from './services/leaderboard-api.js';
+import { findPublicRoom, PublicCountdown, MAX_PUBLIC_PLAYERS, MIN_PUBLIC_PLAYERS, describeSlot } from './services/public-lobby.js';
 import { BranchingDQN } from './engine/ai/brain.js';
 import { createAgent, AI_ID, AI_NAME } from './engine/ai/RLTrader.js';
 import { uploadExperience, syncEnabled } from './engine/ai/sync.js';
@@ -1499,6 +1500,9 @@ function initApp() {
   let marketOpen = false;
   let clientHistory = [];
   let joinToken = null;
+  let myPrivate = { playerOrders: {}, brackets: {} }; // client: our own orders/brackets
+  let publicSlot = null;          // the 10-minute slot we're gathering in, or null
+  let publicCountdown = null;     // host only: decides when a public game starts
   const tokenToId = new Map();
   let runTracker = null;    // this game's leaderboard ticket
   let stopFacts = null;
@@ -1512,7 +1516,13 @@ function initApp() {
 
   function notify(playerId, text, level = 'info') {
     if (playerId === currentUserId) toast(text, level);
-    else if (role === 'host') peerNetwork.broadcast({ type: 'NOTICE', playerId, text, level });
+    else if (role === 'host') {
+      // Straight to the player it concerns, rather than to everyone with a
+      // filter on the far side.
+      for (const [conn, id] of connToId) {
+        if (id === playerId) { peerNetwork.send(conn, { type: 'NOTICE', playerId, text, level }); break; }
+      }
+    }
   }
 
   const brackets = new BracketManager(orderBook, ledger, notify);
@@ -1572,6 +1582,10 @@ function initApp() {
   const tradingScreen = $('trading-screen');
   const btnSinglePlayer = $('btn-single-player');
   const btnHostMultiplayer = $('btn-host-multiplayer');
+  const btnPublicGame = $('btn-public-game');
+  const lobbyStatus = $('lobby-status');
+  const waitingTitle = $('waiting-title');
+  const waitingHint = $('waiting-hint');
   const btnJoinMultiplayer = $('btn-join-multiplayer');
   const btnStartGame = $('btn-start-game');
   const roomCodeInput = $('room-code-input');
@@ -1695,6 +1709,13 @@ function initApp() {
     pendingLaunch = null;
     role = 'lobby';
     sessionMode = 'discretionary';
+    if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
+    publicSlot = null;
+    myPrivate = { playerOrders: {}, brackets: {} };
+    setLobbyStatus('');
+    if (waitingTitle) waitingTitle.textContent = 'Waiting for players';
+    if (waitingHint) waitingHint.textContent = 'Share the room code with the traders you want to play against.';
+    if (roomBadge) roomBadge.classList.add('hidden');
     disposeAlgoRunner();
     if (modeSelect) modeSelect.classList.add('hidden');
     if (waitingRoom) waitingRoom.classList.add('hidden');
@@ -1869,24 +1890,41 @@ function initApp() {
   // Clients get a slim payload: top of book, only the NEW chart points, and
   // every human's own orders/brackets. The old version re-sent the full book
   // and the full price history on every tick, which grew all game long.
+  // The state everybody sees is broadcast once. Each player's own working
+  // orders and stop/take levels go to that player alone, in a separate small
+  // message: they're nobody else's business (a client used to receive every
+  // other player's stop losses, which is an obvious thing to hunt) and they
+  // are what stopped the shared payload from being encoded a single time.
   function publishState(points = []) {
+    const mid = orderBook.getMidPrice();
     const payload = {
-      midPrice: orderBook.getMidPrice(),
+      midPrice: mid,
       simTimeStr: formatSimTime(gameLoop.simulatedSeconds),
       progress: gameLoop.progress(),
       points,
       bids: orderBook.levels('BUY', BOOK_LEVELS),
       asks: orderBook.levels('SELL', BOOK_LEVELS),
       traders: gameLoop.fleet.size + ledger.ids().filter((id) => id !== AI_ID).length,
-      playerOrders: collectHumanOrders(),
-      brackets: brackets.byPlayer(),
       // Every trader's running PnL, best first, so the strategy panel can
       // show the room's standings live instead of only at the closing bell.
-      standings: ledger.standings(orderBook.getMidPrice())
+      standings: ledger.standings(mid)
         .map((st) => (st.id === AI_ID ? { ...st, name: AI_NAME, isAI: true } : st))
     };
-    eventBus.emit('TICK', { ...payload, priceHistory: gameLoop.priceHistory });
-    if (role === 'host') peerNetwork.broadcast({ type: 'SYNC_TICK', payload });
+
+    const allOrders = collectHumanOrders();
+    const allBrackets = brackets.byPlayer();
+    const mine = (id) => ({
+      playerOrders: { [id]: allOrders[id] || [] },
+      brackets: { [id]: allBrackets[id] || [] }
+    });
+
+    eventBus.emit('TICK', { ...payload, ...mine(currentUserId), priceHistory: gameLoop.priceHistory });
+
+    if (role === 'host') {
+      // Private first, so the tick that follows renders against fresh levels.
+      for (const [conn, id] of connToId) peerNetwork.send(conn, { type: 'SYNC_PRIVATE', ...mine(id) });
+      peerNetwork.broadcast({ type: 'SYNC_TICK', payload });
+    }
   }
 
   // Only trades involving a human matter to clients (bot-vs-bot trades were
@@ -2099,12 +2137,18 @@ function initApp() {
   function onHostMessage(data, conn) {
     if (data.type === 'JOIN_LOBBY') {
       if (marketOpen || gameLoop.finished) {
-        peerNetwork.broadcast({ type: 'JOIN_REJECTED', token: data.token, reason: 'This game has already started.' });
+        peerNetwork.send(conn, { type: 'JOIN_REJECTED', token: data.token, reason: 'This game has already started.' });
+        return;
+      }
+      // Public lobbies are capped, and the doors lock once full so the next
+      // arrivals gather for the following slot instead of waiting here.
+      if (publicSlot != null && !tokenToId.has(data.token) && connectedPlayers.length >= MAX_PUBLIC_PLAYERS) {
+        peerNetwork.send(conn, { type: 'JOIN_REJECTED', token: data.token, full: true, reason: 'That public game just filled up. The next one is opening now.' });
         return;
       }
       // Everyone in a room plays the same mode, so each score lands on one leaderboard.
       if ((data.mode || 'discretionary') !== sessionMode) {
-        peerNetwork.broadcast({
+        peerNetwork.send(conn, {
           type: 'JOIN_REJECTED',
           token: data.token,
           reason: `This room is ${modeLabel(sessionMode).toLowerCase()}. Join again and choose ${modeLabel(sessionMode)}.`
@@ -2117,11 +2161,14 @@ function initApp() {
         if (data.token) tokenToId.set(data.token, id);
         connectedPlayers.push({ id, isHost: false });
         ledger.register(id);
+      } else if (!connectedPlayers.some((p) => p.id === id)) {
+        connectedPlayers.push({ id, isHost: false }); // they dropped and came back
       }
       if (conn) connToId.set(conn, id);
-      peerNetwork.broadcast({ type: 'WELCOME', token: data.token, playerId: id });
-      peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers });
+      peerNetwork.send(conn, { type: 'WELCOME', token: data.token, playerId: id });
+      peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers, public: publicSlot != null });
       renderPlayerList();
+      publicCountdown?.update(connectedPlayers.length);
     } else if (HUMAN_ACTIONS.has(data.type)) {
       handleAction(data, data.playerId);
       if (marketOpen) publishState();
@@ -2135,11 +2182,33 @@ function initApp() {
     }
   }
 
+  // The host's tab closing used to leave clients frozen with no explanation.
+  eventBus.on('NET_HOST_LOST', () => {
+    if (role !== 'client') return;
+    if (marketOpen) {
+      toast('The host left, so the game has ended.', 'error');
+      return;
+    }
+    toast('The host left before the game started.', 'error');
+    hideFacts();
+    backToLobbyMenu();
+  });
+
+  eventBus.on('NET_ERROR', ({ kind, message }) => {
+    if (kind === 'no-room') toast('No game is running under that code.', 'error');
+    else if (kind === 'network') toast('Lost the connection. Check your network and try again.', 'error');
+    else if (message) toast(message, 'error');
+  });
+
   function onClientMessage(data) {
     switch (data.type) {
       case 'LOBBY_UPDATE':
         connectedPlayers = data.players || [];
         renderPlayerList();
+        if (publicSlot != null) renderPublicCountdown(null, connectedPlayers.length);
+        break;
+      case 'PUBLIC_COUNTDOWN':
+        if (publicSlot != null) renderPublicCountdown(data.secs, data.players);
         break;
       case 'WELCOME':
         if (data.token !== joinToken) break;
@@ -2150,6 +2219,12 @@ function initApp() {
         break;
       case 'JOIN_REJECTED':
         if (data.token !== joinToken) break;
+        // A full public lobby isn't an error: go and wait for the next one.
+        if (data.full && publicSlot != null) {
+          toast(data.reason || 'That game just filled up.', 'info');
+          startPublicGame();
+          break;
+        }
         toast(data.reason || 'Could not join that room.', 'error');
         hideFacts();
         backToLobbyMenu();
@@ -2162,6 +2237,11 @@ function initApp() {
         accountManager.broadcastState();
         launchTradingScreen();
         break;
+      case 'SYNC_PRIVATE':
+        // Just our own working orders and bracket levels; held until the next
+        // shared tick draws them.
+        myPrivate = { playerOrders: data.playerOrders || {}, brackets: data.brackets || {} };
+        break;
       case 'SYNC_TICK': {
         const p = data.payload || {};
         if (p.points && p.points.length) {
@@ -2169,7 +2249,7 @@ function initApp() {
           const overflow = clientHistory.length - (TOTAL_TICKS + 1);
           if (overflow > 0) clientHistory.splice(0, overflow);
         }
-        eventBus.emit('TICK', { ...p, priceHistory: clientHistory });
+        eventBus.emit('TICK', { ...p, ...myPrivate, priceHistory: clientHistory });
         break;
       }
       case 'SYNC_TRADE':
@@ -2215,6 +2295,12 @@ function initApp() {
     if (role !== 'host') return;
     const id = connToId.get(conn);
     connToId.delete(conn);
+    if (id && !marketOpen) {
+      connectedPlayers = connectedPlayers.filter((p) => p.id !== id);
+      peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers, public: publicSlot != null });
+      renderPlayerList();
+      publicCountdown?.update(connectedPlayers.length);
+    }
     if (!id || !marketOpen) return;
     droppedPlayers.add(id);
     if (decision) finishDecision(id, decision.round);
@@ -2224,6 +2310,96 @@ function initApp() {
 
   // Each entry point asks for the mode first (showModeSelect); these are the
   // original flows, run once the mode (and strategy, if algorithmic) is set.
+
+  // ---- Public lobbies --------------------------------------------------------
+  // Discretionary only for now. See src/services/public-lobby.js for how the
+  // clock is used as a meeting point and when a room decides to start.
+
+  function setLobbyStatus(text) {
+    if (!lobbyStatus) return;
+    lobbyStatus.textContent = text || '';
+    lobbyStatus.classList.toggle('hidden', !text);
+  }
+
+  function showPublicWaitingRoom(slot) {
+    if (displayRoomCode) displayRoomCode.innerText = 'PUBLIC';
+    if (roomCodeDisplay) roomCodeDisplay.innerText = 'Public';
+    if (roomBadge) roomBadge.classList.remove('hidden');
+    if (waitingTitle) waitingTitle.textContent = 'Public game';
+    if (waitingHint) waitingHint.textContent = `Doors opened at ${describeSlot(slot)}. The game starts once ${MIN_PUBLIC_PLAYERS} traders are here.`;
+    if (lobbyMenu) lobbyMenu.classList.add('hidden');
+    if (waitingRoom) waitingRoom.classList.remove('hidden');
+    if (hostControls) hostControls.classList.add('hidden'); // nobody presses start; the clock does
+    if (clientStatus) clientStatus.classList.remove('hidden');
+    showFacts();
+  }
+
+  function renderPublicCountdown(secs, players) {
+    if (role === 'host') peerNetwork.broadcast({ type: 'PUBLIC_COUNTDOWN', secs, players });
+    if (!clientStatus) return;
+    if (secs == null) {
+      const need = MIN_PUBLIC_PLAYERS - players;
+      clientStatus.textContent = players >= MIN_PUBLIC_PLAYERS
+        ? 'Starting shortly…'
+        : `Waiting for ${need} more ${need === 1 ? 'trader' : 'traders'}…`;
+      return;
+    }
+    clientStatus.textContent = `Starting in ${secs}s · ${players} of ${MAX_PUBLIC_PLAYERS} traders`;
+  }
+
+  async function startPublicGame() {
+    if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
+    role = 'lobby';
+    sessionMode = 'discretionary';
+    disposeAlgoRunner();
+    currentUserId = getTraderName();
+    // The host connection can open (and JOIN_LOBBY go out) before the await
+    // below returns, so the token has to be ready first.
+    joinToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    if (lobbyMenu) lobbyMenu.classList.add('hidden');
+    if (waitingRoom) waitingRoom.classList.add('hidden');
+    setLobbyStatus('Looking for a game…');
+
+    const found = await findPublicRoom(peerNetwork, { onStatus: setLobbyStatus });
+    setLobbyStatus('');
+    if (!found) {
+      toast("Couldn't reach the matchmaking network. Try again in a moment.", 'error');
+      backToLobbyMenu();
+      return;
+    }
+
+    publicSlot = found.slot;
+    if (found.role === 'host') {
+      role = 'host';
+      ledger.register(currentUserId);
+      accountManager.setPlayerId(currentUserId);
+      connectedPlayers = [{ id: currentUserId, isHost: true }];
+      publicCountdown = new PublicCountdown({
+        onTick: renderPublicCountdown,
+        onStart: () => {
+          if (role !== 'host' || marketOpen || gameLoop.finished) return;
+          aiReady.then(() => {
+            peerNetwork.broadcast({ type: 'START_GAME' });
+            beginMarket();
+          });
+        }
+      });
+      publicCountdown.update(1);
+    } else {
+      role = 'client';
+      accountManager.setPlayerId(currentUserId);
+      connectedPlayers = [{ id: currentUserId, isHost: false }];
+    }
+    renderPlayerList();
+    showPublicWaitingRoom(found.slot);
+  }
+
+  if (btnPublicGame) {
+    btnPublicGame.addEventListener('click', () => {
+      if (role !== 'lobby') return;
+      startPublicGame();
+    });
+  }
 
   function startSinglePlayer() {
     role = 'solo';
