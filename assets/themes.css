@@ -1,0 +1,217 @@
+/* ==================================================================
+   assets/themes.css: the three layouts (White, Black, Navy blue).
+
+   Every colour in the game and on the leaderboard comes from these
+   tokens. The active layout is the data-theme attribute on <html>,
+   set before first paint by the small inline script in each page's
+   <head> and changed at runtime by src/ui/theme.js.
+
+   Notes on a few tokens:
+   --gold*        the accent slot. Gold in White, blue in Black,
+                  periwinkle in Navy blue. The names stayed so
+                  existing markup (.chip-gold, .btn-gold) keeps working.
+   --gold-rgb     "r, g, b" of the accent, for tints: rgba(var(--gold-rgb), .2)
+   --shade        "r, g, b" that rules, washes and hovers are mixed from:
+                  navy on the white layout, near-white on the dark ones.
+   --shadow-rgb   "r, g, b" for drop shadows (always dark).
+   --bid/--ask    text colours; --bid-fill/--ask-fill are button fills
+                  dark enough for white labels.
+   --chart-*      literal colours the canvas chart reads through JS.
+   ================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --paper: #F6F8FB;
+  --ink: #0B1D47;
+  --ink-soft: #2A3B63;
+  --muted: #5A6B88;
+  --faint: #8C99B0;
+  --brand: #156082;
+
+  --shade: 11, 29, 71;
+  --shadow-rgb: 11, 29, 71;
+  --hover-mix: #000;
+
+  --gold: #B08D3C;
+  --gold-rgb: 176, 141, 60;
+  --gold-ink: #8A6A1F;
+  --gold-soft: #C9A85A;
+  --gold-tint: rgba(176, 141, 60, 0.16);
+  --on-accent: #fff;
+
+  --primary: #0B1D47;
+  --primary-hover: #142C63;
+
+  --bid: #0F8A5F;
+  --bid-rgb: 15, 138, 95;
+  --bid-tint: rgba(15, 138, 95, 0.11);
+  --bid-fill: #0F8A5F;
+  --ask: #C23B32;
+  --ask-rgb: 194, 59, 50;
+  --ask-tint: rgba(194, 59, 50, 0.10);
+  --ask-fill: #C23B32;
+
+  --line: rgba(11, 29, 71, 0.08);
+  --line-strong: rgba(11, 29, 71, 0.15);
+  --line-hover: rgba(11, 29, 71, 0.35);
+
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.8);
+  --card: rgba(255, 255, 255, 0.74);
+  --card-soft: rgba(255, 255, 255, 0.45);
+  --raised: #fff;
+  --field: rgba(255, 255, 255, 0.86);
+  --ghost: rgba(255, 255, 255, 0.7);
+  --ghost-hover: #fff;
+  --menu: rgba(255, 255, 255, 0.97);
+  --topbar: rgba(255, 255, 255, 0.55);
+  --legend-bg: rgba(255, 255, 255, 0.75);
+  --lobby-card: rgba(255, 255, 255, 0.58);
+  --overlay: rgba(246, 248, 251, 0.55);
+  --toast-news: rgba(255, 252, 244, 0.94);
+
+  --body-bg:
+    radial-gradient(60rem 40rem at 0% 0%, rgba(21, 96, 130, 0.09), transparent 62%),
+    radial-gradient(52rem 36rem at 100% 100%, rgba(176, 141, 60, 0.13), transparent 62%),
+    radial-gradient(rgba(11, 29, 71, 0.075) 1px, transparent 1.3px) 0 0 / 18px 18px,
+    #F6F8FB;
+  --lobby-bg: linear-gradient(180deg, #FFFFFF 0%, #F5F8FC 50%, #DFE7F2 100%);
+  --dots: rgba(11, 29, 71, 0.11);
+  --statement-glow: rgba(246, 248, 251, 0.95);
+
+  --chart-tag: #0B1D47;
+  --chart-tag-text: #FFFFFF;
+  --chart-palette: #B08D3C, #156082, #7B4FA0, #C0612B, #2E8B84, #A23B72;
+}
+
+/* Black: flat, exchange-style charcoal with a blue accent. */
+:root[data-theme="black"] {
+  color-scheme: dark;
+
+  --paper: #0B0E11;
+  --ink: #EAECEF;
+  --ink-soft: #C4C9D1;
+  --muted: #929AA5;
+  --faint: #6B7380;
+  --brand: #4D8DFF;
+
+  --shade: 234, 236, 239;
+  --shadow-rgb: 0, 0, 0;
+  --hover-mix: #fff;
+
+  --gold: #2F6FEB;
+  --gold-rgb: 77, 141, 255;
+  --gold-ink: #6FA6FF;
+  --gold-soft: #5B93F5;
+  --gold-tint: rgba(77, 141, 255, 0.15);
+  --on-accent: #fff;
+
+  --primary: #2F6FEB;
+  --primary-hover: #3F7CF2;
+
+  --bid: #2EBD85;
+  --bid-rgb: 46, 189, 133;
+  --bid-tint: rgba(46, 189, 133, 0.12);
+  --bid-fill: #118A5C;
+  --ask: #F6465D;
+  --ask-rgb: 246, 70, 93;
+  --ask-tint: rgba(246, 70, 93, 0.12);
+  --ask-fill: #D9304A;
+
+  --line: rgba(234, 236, 239, 0.07);
+  --line-strong: rgba(234, 236, 239, 0.13);
+  --line-hover: rgba(234, 236, 239, 0.30);
+
+  --glass: #181A20;
+  --glass-edge: transparent;
+  --card: #1E2329;
+  --card-soft: rgba(30, 35, 41, 0.55);
+  --raised: #2B3139;
+  --field: #1E2329;
+  --ghost: #1E2329;
+  --ghost-hover: #2B3139;
+  --menu: #1E2329;
+  --topbar: #181A20;
+  --legend-bg: rgba(24, 26, 32, 0.85);
+  --lobby-card: #181A20;
+  --overlay: rgba(11, 14, 17, 0.72);
+  --toast-news: #1E2329;
+
+  --body-bg: #0B0E11;
+  --lobby-bg: linear-gradient(180deg, #0B0E11 0%, #0D1115 55%, #111720 100%);
+  --dots: rgba(234, 236, 239, 0.07);
+  --statement-glow: rgba(11, 14, 17, 0.95);
+
+  --chart-tag: #363C46;
+  --chart-tag-text: #EAECEF;
+  --chart-palette: #5B9BFF, #35C2D6, #B08CFF, #FF9F5A, #4FD1A5, #F27BB5;
+}
+
+/* Navy blue: deep navy panels on near-black, with a periwinkle accent. */
+:root[data-theme="navy"] {
+  color-scheme: dark;
+
+  --paper: #090C1D;
+  --ink: #E6E8FA;
+  --ink-soft: #C0C5EA;
+  --muted: #9197C2;
+  --faint: #6B73A6;
+  --brand: #8C96FF;
+
+  --shade: 172, 182, 255;
+  --shadow-rgb: 0, 0, 0;
+  --hover-mix: #fff;
+
+  --gold: #5D66E8;
+  --gold-rgb: 140, 150, 255;
+  --gold-ink: #A4ADFF;
+  --gold-soft: #7C84F0;
+  --gold-tint: rgba(140, 150, 255, 0.16);
+  --on-accent: #fff;
+
+  --primary: #5D66E8;
+  --primary-hover: #6C75F0;
+
+  --bid: #3DD598;
+  --bid-rgb: 61, 213, 152;
+  --bid-tint: rgba(61, 213, 152, 0.12);
+  --bid-fill: #128A5E;
+  --ask: #FF6B81;
+  --ask-rgb: 255, 107, 129;
+  --ask-tint: rgba(255, 107, 129, 0.12);
+  --ask-fill: #D6344F;
+
+  --line: rgba(172, 182, 255, 0.09);
+  --line-strong: rgba(172, 182, 255, 0.17);
+  --line-hover: rgba(172, 182, 255, 0.38);
+
+  --glass: rgba(21, 26, 58, 0.78);
+  --glass-edge: rgba(172, 182, 255, 0.08);
+  --card: rgba(31, 37, 78, 0.72);
+  --card-soft: rgba(31, 37, 78, 0.4);
+  --raised: #262D63;
+  --field: rgba(11, 14, 36, 0.7);
+  --ghost: rgba(31, 37, 78, 0.72);
+  --ghost-hover: #283070;
+  --menu: #181D45;
+  --topbar: rgba(14, 18, 44, 0.82);
+  --legend-bg: rgba(21, 26, 58, 0.85);
+  --lobby-card: rgba(21, 26, 58, 0.72);
+  --overlay: rgba(9, 12, 29, 0.66);
+  --toast-news: #1B2152;
+
+  --body-bg:
+    radial-gradient(60rem 40rem at 0% 0%, rgba(92, 80, 220, 0.20), transparent 62%),
+    radial-gradient(52rem 36rem at 100% 100%, rgba(56, 92, 220, 0.16), transparent 62%),
+    radial-gradient(rgba(172, 182, 255, 0.06) 1px, transparent 1.3px) 0 0 / 18px 18px,
+    #090C1D;
+  --lobby-bg: linear-gradient(180deg, #0A0D22 0%, #0E1333 55%, #1A1C4A 100%);
+  --dots: rgba(172, 182, 255, 0.10);
+  --statement-glow: rgba(10, 13, 34, 0.95);
+
+  --chart-tag: #2C3470;
+  --chart-tag-text: #E6E8FA;
+  --chart-palette: #9AA6FF, #4CC9E0, #D09BFF, #FFA36C, #5DD6AE, #F486C0;
+}
