@@ -86,6 +86,9 @@ export class PeerNetwork {
       const leave = () => {
         if (gone) return;
         gone = true;
+        // A connection from a room we've already closed (moving rooms) is
+        // not a player leaving the room we're in now.
+        if (!this.connections.includes(conn)) return;
         this.connections = this.connections.filter((c) => c !== conn);
         this.emit('NET_CLIENT_DISCONNECTED', conn);
       };
@@ -158,8 +161,11 @@ export class PeerNetwork {
         const hostGone = () => {
           if (lost) return;
           lost = true;
-          this.hostConn = null;
-          if (settled) this.emit('NET_HOST_LOST');
+          // Only the host we're connected to right now counts; a link we
+          // closed ourselves on the way to another room doesn't.
+          const current = this.hostConn === conn;
+          if (current) this.hostConn = null;
+          if (settled && current) this.emit('NET_HOST_LOST');
           finish(false);
         };
         conn.on('close', hostGone);
@@ -218,11 +224,14 @@ export class PeerNetwork {
   }
 
   close() {
-    if (this.peer && !this.peer.destroyed) {
-      try { this.peer.destroy(); } catch (err) { /* already gone */ }
-    }
+    // Forget the old room before tearing it down, so the close events the
+    // teardown fires are recognised as stale (see leave / hostGone).
+    const peer = this.peer;
     this.peer = null;
     this.connections = [];
     this.hostConn = null;
+    if (peer && !peer.destroyed) {
+      try { peer.destroy(); } catch (err) { /* already gone */ }
+    }
   }
 }
