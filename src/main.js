@@ -290,6 +290,8 @@ class Ledger {
   has(id) { return this.accounts.has(id); }
   get(id) { return this.accounts.get(id); }
   ids() { return [...this.accounts.keys()]; }
+  unregister(id) { this.accounts.delete(id); } // left before the bell: not a trader in this game
+  reset() { this.accounts.clear(); }           // moving to a different room
 
   standings(mid) {
     return [...this.accounts.values()]
@@ -1503,6 +1505,9 @@ function initApp() {
   let myPrivate = { playerOrders: {}, brackets: {} }; // client: our own orders/brackets
   let publicSlot = null;          // the 10-minute slot we're gathering in, or null
   let publicCountdown = null;     // host only: decides when a public game starts
+  let publicRolloverTimer = null; // reshuffles an under-filled public room at the end of its slot
+  let publicRolloverAt = 0;       // wall-clock ms of that reshuffle, for the waiting-room text
+  let publicSearching = false;    // a findPublicRoom() is in flight; don't start a second one
   const tokenToId = new Map();
   let runTracker = null;    // this game's leaderboard ticket
   let stopFacts = null;
@@ -1710,6 +1715,7 @@ function initApp() {
     role = 'lobby';
     sessionMode = 'discretionary';
     if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
+    cancelPublicRollover();
     publicSlot = null;
     myPrivate = { playerOrders: {}, brackets: {} };
     setLobbyStatus('');
@@ -2163,6 +2169,7 @@ function initApp() {
         ledger.register(id);
       } else if (!connectedPlayers.some((p) => p.id === id)) {
         connectedPlayers.push({ id, isHost: false }); // they dropped and came back
+        ledger.register(id);                          // (their account was dropped with them)
       }
       if (conn) connToId.set(conn, id);
       peerNetwork.send(conn, { type: 'WELCOME', token: data.token, playerId: id });
@@ -2189,6 +2196,11 @@ function initApp() {
       toast('The host left, so the game has ended.', 'error');
       return;
     }
+    if (publicSlot != null) {
+      toast("The host left, so we're finding you another public game.", 'info');
+      startPublicGame();
+      return;
+    }
     toast('The host left before the game started.', 'error');
     hideFacts();
     backToLobbyMenu();
@@ -2210,6 +2222,9 @@ function initApp() {
       case 'PUBLIC_COUNTDOWN':
         if (publicSlot != null) renderPublicCountdown(data.secs, data.players);
         break;
+      case 'PUBLIC_ROLLOVER':
+        if (publicSlot != null && !marketOpen) rollIntoNextPublicGame();
+        break;
       case 'WELCOME':
         if (data.token !== joinToken) break;
         if (data.playerId !== currentUserId) toast(`That name was taken, so you're trading as ${data.playerId}.`, 'info');
@@ -2230,6 +2245,7 @@ function initApp() {
         backToLobbyMenu();
         break;
       case 'START_GAME':
+        cancelPublicRollover();
         startRunTracking('multi');
         clientHistory = [];
         marketOpen = true;
@@ -2297,6 +2313,7 @@ function initApp() {
     connToId.delete(conn);
     if (id && !marketOpen) {
       connectedPlayers = connectedPlayers.filter((p) => p.id !== id);
+      ledger.unregister(id);
       peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers, public: publicSlot != null });
       renderPlayerList();
       publicCountdown?.update(connectedPlayers.length);
@@ -2321,12 +2338,78 @@ function initApp() {
     lobbyStatus.classList.toggle('hidden', !text);
   }
 
+  // A public room lives for one slot. If it hasn't reached MIN_PUBLIC_PLAYERS
+  // by the time the next slot opens, everyone in it moves to the next slot's
+  // room, where they join whoever just arrived instead of waiting forever in
+  // a room nobody new will ever find.
+  //
+  // The host decides (a few seconds after the boundary, so a client whose
+  // clock runs slightly slow is already in the new slot when it searches),
+  // tells the room, and closes it. Clients also keep their own timer a bit
+  // later as a backstop, in case the host's tab is frozen or throttled.
+  const PUBLIC_SLOT_MS = 10 * 60 * 1000;   // must match the slot length in public-lobby.js
+  const ROLLOVER_GRACE_MS = 3000;
+  const ROLLOVER_BACKSTOP_MS = 8000;
+
+  function nextSlotBoundary(now = Date.now()) {
+    return (Math.floor(now / PUBLIC_SLOT_MS) + 1) * PUBLIC_SLOT_MS;
+  }
+
+  function cancelPublicRollover() {
+    if (publicRolloverTimer) clearTimeout(publicRolloverTimer);
+    publicRolloverTimer = null;
+    publicRolloverAt = 0;
+  }
+
+  function schedulePublicRollover() {
+    cancelPublicRollover();
+    if (publicSlot == null) return;
+    publicRolloverAt = nextSlotBoundary();
+    const lag = ROLLOVER_GRACE_MS + (role === 'host' ? 0 : ROLLOVER_BACKSTOP_MS);
+    publicRolloverTimer = setTimeout(checkPublicRollover, Math.max(0, publicRolloverAt + lag - Date.now()));
+  }
+
+  function checkPublicRollover() {
+    publicRolloverTimer = null;
+    if (publicSlot == null || marketOpen || gameLoop.finished) return;
+    if (role !== 'host' && role !== 'client') return;
+    // Enough traders: the start countdown is running, so let it finish. Stay
+    // armed for the next boundary in case people drop and it falls short.
+    if (connectedPlayers.length >= MIN_PUBLIC_PLAYERS) { schedulePublicRollover(); return; }
+    rollIntoNextPublicGame();
+  }
+
+  function rollIntoNextPublicGame() {
+    cancelPublicRollover();
+    toast("Not enough traders turned up, so you're moving to the next public game.", 'info');
+    if (role === 'host') {
+      peerNetwork.broadcast({ type: 'PUBLIC_ROLLOVER' });
+      role = 'lobby'; // stop answering joins while the notice goes out
+      setTimeout(startPublicGame, 300); // then close the room and search
+    } else {
+      startPublicGame();
+    }
+  }
+
+  // Leaving one room for another: nothing from the old room carries over.
+  function resetRoomState() {
+    peerNetwork.close();
+    connectedPlayers = [];
+    tokenToId.clear();
+    connToId.clear();
+    droppedPlayers.clear();
+    ledger.reset();
+  }
+
   function showPublicWaitingRoom(slot) {
     if (displayRoomCode) displayRoomCode.innerText = 'PUBLIC';
     if (roomCodeDisplay) roomCodeDisplay.innerText = 'Public';
     if (roomBadge) roomBadge.classList.remove('hidden');
     if (waitingTitle) waitingTitle.textContent = 'Public game';
-    if (waitingHint) waitingHint.textContent = `Doors opened at ${describeSlot(slot)}. The game starts once ${MIN_PUBLIC_PLAYERS} traders are here.`;
+    const reshuffle = publicRolloverAt
+      ? ` If fewer turn up by ${new Date(publicRolloverAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, everyone moves to the next game.`
+      : '';
+    if (waitingHint) waitingHint.textContent = `Doors opened at ${describeSlot(slot)}. The game starts once ${MIN_PUBLIC_PLAYERS} traders are here.${reshuffle}`;
     if (lobbyMenu) lobbyMenu.classList.add('hidden');
     if (waitingRoom) waitingRoom.classList.remove('hidden');
     if (hostControls) hostControls.classList.add('hidden'); // nobody presses start; the clock does
@@ -2348,8 +2431,12 @@ function initApp() {
   }
 
   async function startPublicGame() {
+    if (publicSearching) return;
+    publicSearching = true;
     if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
+    cancelPublicRollover();
     role = 'lobby';
+    resetRoomState();
     sessionMode = 'discretionary';
     disposeAlgoRunner();
     currentUserId = getTraderName();
@@ -2360,7 +2447,12 @@ function initApp() {
     if (waitingRoom) waitingRoom.classList.add('hidden');
     setLobbyStatus('Looking for a game…');
 
-    const found = await findPublicRoom(peerNetwork, { onStatus: setLobbyStatus });
+    let found = null;
+    try {
+      found = await findPublicRoom(peerNetwork, { onStatus: setLobbyStatus });
+    } finally {
+      publicSearching = false;
+    }
     setLobbyStatus('');
     if (!found) {
       toast("Couldn't reach the matchmaking network. Try again in a moment.", 'error');
@@ -2378,6 +2470,7 @@ function initApp() {
         onTick: renderPublicCountdown,
         onStart: () => {
           if (role !== 'host' || marketOpen || gameLoop.finished) return;
+          cancelPublicRollover();
           aiReady.then(() => {
             peerNetwork.broadcast({ type: 'START_GAME' });
             beginMarket();
@@ -2391,6 +2484,7 @@ function initApp() {
       connectedPlayers = [{ id: currentUserId, isHost: false }];
     }
     renderPlayerList();
+    schedulePublicRollover();
     showPublicWaitingRoom(found.slot);
   }
 
