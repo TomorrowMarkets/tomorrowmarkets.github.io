@@ -12,6 +12,7 @@ export class OrderBook {
     this.asks = []; // best (lowest) first
     this.index = new Map(); // orderId -> { order, side }
     this.lastPrice = 100.0;
+    this.referencePrice = null; // historical replay marks to the recorded mid
     this.currentTick = 0;
     this.seq = 0;
     this.nextExpiry = Infinity;
@@ -28,6 +29,7 @@ export class OrderBook {
   // Mid of the best bid and ask. If one side is empty the "mid" would jump to
   // the other side's best price, so fall back to the last trade instead.
   getMidPrice() {
+    if (Number.isFinite(this.referencePrice) && this.referencePrice > 0) return this.referencePrice;
     if (this.bids.length > 0 && this.asks.length > 0) return (this.bids[0].price + this.asks[0].price) / 2;
     return this.lastPrice || 100.0;
   }
@@ -140,7 +142,8 @@ export class OrderBook {
   processOrder(order) {
     const { playerId, side } = order;
     const qty = Math.floor(order.qty);
-    if (!(qty > 0)) return null;
+    if (!Number.isSafeInteger(qty) || qty <= 0 || !['BUY', 'SELL'].includes(side)
+      || !['MARKET', 'LIMIT'].includes(order.type)) return null;
     const id = order.id || this.nextId('b');
 
     if (order.type === 'MARKET') {
@@ -149,7 +152,7 @@ export class OrderBook {
     }
 
     const price = round2(order.price);
-    if (!(price > 0)) return null;
+    if (!Number.isFinite(price) || !(price > 0)) return null;
     const r = this.match(playerId, side, qty, price, id);
     const restingQty = qty - r.filledQty;
     if (restingQty > 0) {
