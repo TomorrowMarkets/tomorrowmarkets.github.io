@@ -49,3 +49,4 @@ export async function uploadExperience(experience, meta = {}) {
     return false; // offline or blocked: the game carries on regardless
   }
 }
+
