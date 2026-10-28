@@ -1,3 +1,13 @@
+# Tomorrow Markets
+
+Trading, portfolio challenges, historical backtests and an RL spectator arena.
+
+Start with [the version 2 setup guide](UPDATE-README.md) for installation, donation configuration, market data, Simple rules, leaderboard categories and the daily portfolio backend.
+
+Private trading defaults to five sessions in about 20 minutes with 5/10/15-minute bars. Shared v2 leaderboards and daily portfolios need the supplied Supabase migration; daily settlement also needs the data publisher configuration.
+
+## Earlier project documentation
+
 These patch notes are to be taken with a grain of salt, as I will have to very publicly and very obviously explain that these are not going to be the public patch notes.
 I have made considerable reflections, developments and feature designs in advance and none of these will go up in the noted order as "content sharing" is more important
 in order for me to grab a hold of an audience on social media before actually implementing the work and features I myself desire.
@@ -152,3 +162,4 @@ sb_publishable_Rzvy0JUEksDPLELwB2UJkQ_Sf4ELYPJ
 ## Bot keys
 https://iwmqwqguisduqwnsdbyj.supabase.co \
 sb_publishable_x-5rCxKoGiy7bGouB23uAQ_7w_eUMaW
+

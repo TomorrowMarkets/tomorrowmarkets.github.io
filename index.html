@@ -463,10 +463,11 @@
             <p class="text-[11px] t-faint text-center -mt-2.5">Discretionary, up to 20 traders. No room code needed.</p>
 
             <div class="grid grid-cols-2 gap-2.5">
-              <button id="btn-single-player" class="btn btn-primary">Single player</button>
+              <button id="btn-single-player" class="btn btn-gold">Single player</button>
               <button id="btn-host-multiplayer" class="btn btn-ghost">Host multiplayer</button>
             </div>
 
+            <div class="grid grid-cols-2 gap-2.5"><button id="btn-backtest" type="button" class="btn btn-ghost">Historical backtest</button><button id="btn-live-pm" type="button" class="btn btn-ghost">Daily portfolio</button></div>
             <p id="lobby-status" class="hidden text-center text-xs t-muted animate-pulse"></p>
 
             <div class="divider-label">or join a room</div>
@@ -485,7 +486,7 @@
               <p class="text-xs t-muted mt-1">Choose the data and session length, then enter a challenge.</p>
             </div>
             <div id="setup-join-note" hidden class="setup-status">Choose the same challenge type as your host. The host sets the dataset, duration and portfolio rounds.</div>
-            <fieldset id="challenge-settings" class="challenge-settings">
+            <details id="challenge-settings-details" class="session-details"><summary id="setup-summary">Session settings · 5 days · 20 min</summary><fieldset id="challenge-settings" class="challenge-settings">
               <legend class="sr-only">Session settings</legend>
               <div class="challenge-two">
                 <div>
@@ -494,13 +495,19 @@
                 </div>
                 <div>
                   <label for="setup-duration">Session length</label>
-                  <select id="setup-duration" class="field"><option value="10">10 minutes</option><option value="15" selected>15 minutes</option><option value="20">20 minutes</option></select>
+                  <select id="setup-duration" class="field"><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="20" selected>20 minutes</option></select>
                 </div>
               </div>
+              <div class="challenge-two">
+                <div><label for="setup-days">Trading sessions</label><select id="setup-days" class="field"><option value="5">5 trading days</option><option value="1">1 trading day</option></select></div>
+                <div><label for="setup-bar-minutes">Decision / chart bars</label><select id="setup-bar-minutes" class="field"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option></select></div>
+              </div>
+              <label class="setup-status"><input type="checkbox" id="setup-arena-learning"> Enable learning in the spectator RL arena</label>
               <div id="setup-book-wrap" hidden>
                 <label for="setup-book-dataset">Historical orderbook dataset</label>
                 <select id="setup-book-dataset" class="field"><option value="">Loading…</option></select>
               </div>
+              <div id="setup-history-start-wrap" hidden><label for="setup-history-start">Backtest start session (optional)</label><input id="setup-history-start" type="date" class="field"><p class="setup-status">Leave empty to repeat the dataset's first selected sessions.</p></div>
               <div>
                 <label for="setup-portfolio-dataset">Portfolio dataset · 30 assets</label>
                 <select id="setup-portfolio-dataset" class="field"><option value="">Loading…</option></select>
@@ -510,7 +517,7 @@
                 <select id="setup-stride" class="field"><option value="5">Weekly · 5 trading days per round</option><option value="1">Daily · 1 trading day per round</option></select>
               </div>
               <p id="setup-status" class="setup-status" role="status"></p>
-            </fieldset>
+            </fieldset></details>
             <div class="space-y-2.5">
               <button id="mode-discretionary" type="button" class="mode-option">
                 <span class="mode-option-title">Discretionary</span>
@@ -525,6 +532,7 @@
               <span class="mode-option-title">Portfolio management</span>
               <span class="mode-option-desc">Allocate across 30 assets through a random year. Saved targets carry into each round.</span>
             </button>
+            <button id="mode-arena" type="button" class="mode-option"><span class="mode-option-title">Watch the RL arena</span><span class="mode-option-desc">Observe two RL traders and background market liquidity. Solo spectator mode.</span></button>
             <button id="btn-mode-back" type="button" class="btn btn-ghost btn-lg">Back</button>
           </div>
 
@@ -591,16 +599,17 @@
           <div class="seg flex" role="group" aria-label="Language">
             <button type="button" data-lang="python" class="seg-btn is-active">Python</button>
             <button type="button" data-lang="r" class="seg-btn">R</button>
-            <button type="button" data-lang="simple" class="seg-btn opacity-50 cursor-not-allowed" disabled title="Coming soon">Simple (soon)</button>
+            <button type="button" data-lang="simple" class="seg-btn">Simple rules</button>
           </div>
           <div class="flex items-center gap-1.5">
             <button id="btn-algo-template" type="button" class="mini">Reset to template</button>
             <label class="mini" style="cursor: pointer;">
-              Upload .py / .R
-              <input id="algo-file-input" type="file" accept=".py,.r,.R,.txt" class="hidden" />
+              Upload .py / .R / .json
+              <input id="algo-file-input" type="file" accept=".py,.r,.R,.txt,.json" class="hidden" />
             </label>
           </div>
         </div>
+        <div id="simple-strategy-builder" class="simple-builder" hidden></div>
         <textarea id="algo-code" spellcheck="false" autocapitalize="off" autocomplete="off"
           class="field flex-1 min-h-0" style="min-height: 18rem;"></textarea>
         <div id="algo-console" class="algo-console mt-2.5 shrink-0 hidden"></div>
@@ -613,6 +622,13 @@
       <aside class="glass p-3.5 overflow-y-auto text-xs t-muted leading-relaxed" style="min-height: 26rem;">
         <div class="panel-title mb-2.5">Reference</div>
 
+        <div id="algo-reference-simple" class="hidden space-y-3">
+          <p>Build separate buy and sell rules. Combine conditions with AND or OR and compare indicators with numbers or other indicators.</p>
+          <p><strong>Rolling:</strong> mean and population standard deviation use the last N completed bars; volume is the sum over those bars; RSI uses Wilder smoothing. <strong>Since start:</strong> statistics use all observed bars; accumulating RSI uses all gains and losses.</p>
+          <p><strong>Persistence:</strong> require consecutive matches, K matches in the last N decision rounds, or K total matches since the start.</p>
+          <p><strong>Limit orders:</strong> offsets are basis points from the current mid. Negative means below the mid; positive means above it. 100 bps = 1%.</p>
+          <p>No signal is emitted before an indicator has enough data. Both signals at once are skipped. Cash/position percentages size the order; the trading engine validates capital and fills.</p>
+        </div>
         <div id="algo-reference-python" class="space-y-3">
           <div>
             <div class="sublabel mb-1">Each turn, <code class="t-ink">data</code> has</div>
@@ -634,8 +650,8 @@
           </div>
           <div>
             <div class="sublabel mb-1">How a game runs</div>
-            <p>Define <code class="t-ink">on_tick(data)</code>. Every few sim-minutes the market pauses for a decision round: every strategy in the room gets the same snapshot, orders are placed, then the day carries on.</p>
-            <p class="mt-1.5">Each round gets up to 60 seconds. A strategy that runs out of time is restarted (top-level variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
+            <p>Define <code class="t-ink">on_tick(data)</code>. At each selected decision bar the market pauses for a decision round: every strategy in the room gets the same snapshot, orders are placed, then the day carries on.</p>
+            <p class="mt-1.5">Backtests allow up to 60 seconds per decision. Timed sessions use a shorter budget based on the selected bar interval. A strategy that runs out of time is restarted (top-level variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
             <p class="mt-1.5"><code class="t-ink">numpy</code>, <code class="t-ink">pandas</code> and other Pyodide packages import normally.</p>
           </div>
         </div>
@@ -661,8 +677,8 @@
           </div>
           <div>
             <div class="sublabel mb-1">How a game runs</div>
-            <p>Define <code class="t-ink">on_tick &lt;- function(data) { ... }</code>. Every few sim-minutes the market pauses for a decision round: every strategy gets the same snapshot, orders are placed, then the day carries on. Variables set with <code class="t-ink">&lt;&lt;-</code> (or outside the function) keep their values between rounds.</p>
-            <p class="mt-1.5">Each round gets up to 60 seconds. A strategy that runs out of time is restarted (variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
+            <p>Define <code class="t-ink">on_tick &lt;- function(data) { ... }</code>. At each selected decision bar the market pauses for a decision round: every strategy gets the same snapshot, orders are placed, then the day carries on. Variables set with <code class="t-ink">&lt;&lt;-</code> (or outside the function) keep their values between rounds.</p>
+            <p class="mt-1.5">Backtests allow up to 60 seconds per decision. Timed sessions use a shorter budget based on the selected bar interval. A strategy that runs out of time is restarted (variables reset). One that errors 5 rounds in a row is stopped for the day.</p>
             <p class="mt-1.5">Runs on <a href="https://webr.r-wasm.org" target="_blank" rel="noopener" class="footer-link">webR</a> in your browser; <code class="t-ink">jsonlite</code> is installed automatically the first time.</p>
           </div>
         </div>
@@ -693,6 +709,7 @@
           </div>
           <span id="session-end-label">06:00 PM</span>
         </div>
+        <div id="backtest-controls" hidden><button id="backtest-pause" type="button" class="btn btn-ghost">Pause</button><button id="backtest-stop" type="button" class="btn btn-ghost">Stop backtest</button></div>
         <span id="sim-clock" class="clock num">09:30:00 AM</span>
         <button type="button" class="btn btn-ghost btn-icon btn-icon-sm" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
       </div>
@@ -794,8 +811,9 @@
           </div>
         </section>
 
+        <section id="arena-panel" class="glass p-3.5" hidden><h2 class="panel-title">RL arena · spectators</h2><p id="arena-status" class="pm-help"></p><div id="arena-standings"></div><p class="pm-help">Two independent copies of the shipped DQN trade alongside the existing market population. Spectators cannot submit orders. Training here is separate from the published long-term brain.</p><button id="arena-export" type="button" class="btn btn-ghost">Download arena checkpoints</button><button id="arena-back" type="button" class="btn btn-ghost" hidden>Back to lobby</button></section>
         <!-- Positions & PnL: order lists scroll, account figures stay pinned -->
-        <section class="positions-panel glass p-3.5 flex-1 flex flex-col">
+        <section id="positions-panel" class="positions-panel glass p-3.5 flex-1 flex flex-col">
           <div class="panel-title mb-2.5 shrink-0">Positions &amp; PnL</div>
 
           <div class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
@@ -908,6 +926,7 @@
       </div>
 
       <div class="space-y-2">
+        <button id="btn-export-backtest" type="button" class="btn btn-ghost btn-lg" hidden>Export backtest CSV</button>
         <button id="btn-edit-strategy" class="hidden btn btn-gold btn-lg">Improve strategy &amp; play again</button>
         <button id="btn-back-to-menu" class="btn btn-primary btn-lg">Back to menu</button>
         <button type="button" data-support class="btn btn-ghost btn-lg">Help fund the next upgrade</button>
