@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Tomorrow Markets | The frontier in simulated markets</title>
+  <title>Tomorrow Markets | Trading &amp; portfolio challenges</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 
   <!-- Apply the saved layout before first paint, so a dark layout never
@@ -15,6 +15,7 @@
     } catch (e) { /* storage blocked: stay on the white layout */ }
   </script>
   <link rel="stylesheet" href="assets/themes.css">
+  <link rel="stylesheet" href="assets/challenges.css">
 
   <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -428,12 +429,21 @@
         <span class="wordmark text-[26px] leading-none">Tomorrow Markets</span>
         <div class="ml-auto flex items-center gap-2">
           <button type="button" class="btn btn-ghost btn-icon" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
+          <button type="button" data-support class="btn btn-ghost">Support</button>
           <a href="leaderboard.html" class="btn btn-ghost">Leaderboard</a>
         </div>
       </header>
 
       <main class="flex-1 min-h-0 overflow-y-auto px-8 md:px-14 py-8 grid lg:grid-cols-[minmax(0,1fr)_24rem] items-center gap-10">
-        <h1 class="statement">The frontier in<br />simulated markets.</h1>
+        <div>
+          <h1 class="statement">The frontier in<br />simulated markets.</h1>
+          <p class="t-muted text-sm mt-5 max-w-md">Trade a simulated or historical order book. Build a portfolio through a year of market history.</p>
+          <section class="support-card" aria-labelledby="support-card-title">
+            <h2 id="support-card-title">Help Tomorrow Markets grow</h2>
+            <p>Your contributions will help fund dedicated server space and a domain, a database and faster loading, and room for more players in our lobbies.</p>
+            <button type="button" data-support class="btn btn-gold">Support the project</button>
+          </section>
+        </div>
 
         <div class="w-full max-w-sm lg:justify-self-end">
           <!-- Step 1: Main Menu -->
@@ -471,9 +481,36 @@
           <!-- Step 1b: Discretionary / Algorithmic -->
           <div id="mode-select" class="hidden lobby-card p-6 space-y-5">
             <div>
-              <h2 class="serif text-[28px] font-normal leading-tight t-ink">How will you trade?</h2>
-              <p class="text-xs t-muted mt-1">This sets today's session — you can pick again next game.</p>
+              <h2 class="serif text-[28px] font-normal leading-tight t-ink">Choose your challenge</h2>
+              <p class="text-xs t-muted mt-1">Choose the data and session length, then enter a challenge.</p>
             </div>
+            <div id="setup-join-note" hidden class="setup-status">Choose the same challenge type as your host. The host sets the dataset, duration and portfolio rounds.</div>
+            <fieldset id="challenge-settings" class="challenge-settings">
+              <legend class="sr-only">Session settings</legend>
+              <div class="challenge-two">
+                <div>
+                  <label for="setup-source">Trading order book</label>
+                  <select id="setup-source" class="field"><option value="simulated">Simulated</option><option value="historical">Historical replay</option></select>
+                </div>
+                <div>
+                  <label for="setup-duration">Session length</label>
+                  <select id="setup-duration" class="field"><option value="10">10 minutes</option><option value="15" selected>15 minutes</option><option value="20">20 minutes</option></select>
+                </div>
+              </div>
+              <div id="setup-book-wrap" hidden>
+                <label for="setup-book-dataset">Historical orderbook dataset</label>
+                <select id="setup-book-dataset" class="field"><option value="">Loading…</option></select>
+              </div>
+              <div>
+                <label for="setup-portfolio-dataset">Portfolio dataset · 30 assets</label>
+                <select id="setup-portfolio-dataset" class="field"><option value="">Loading…</option></select>
+              </div>
+              <div>
+                <label for="setup-stride">Portfolio decision rounds</label>
+                <select id="setup-stride" class="field"><option value="5">Weekly · 5 trading days per round</option><option value="1">Daily · 1 trading day per round</option></select>
+              </div>
+              <p id="setup-status" class="setup-status" role="status"></p>
+            </fieldset>
             <div class="space-y-2.5">
               <button id="mode-discretionary" type="button" class="mode-option">
                 <span class="mode-option-title">Discretionary</span>
@@ -484,6 +521,10 @@
                 <span class="mode-option-desc">Load a Python or R strategy and let it trade for you.</span>
               </button>
             </div>
+            <button id="mode-portfolio" type="button" class="mode-option">
+              <span class="mode-option-title">Portfolio management</span>
+              <span class="mode-option-desc">Allocate across 30 assets through a random year. Saved targets carry into each round.</span>
+            </button>
             <button id="btn-mode-back" type="button" class="btn btn-ghost btn-lg">Back</button>
           </div>
 
@@ -639,18 +680,18 @@
       <div class="flex items-center gap-3">
         <img src="assets/logo.svg" alt="" class="w-6 h-6 rounded-[3px]" />
         <span class="wordmark text-[18px] leading-none">Tomorrow Markets</span>
-        <span class="chip chip-neutral ml-1">Spot / USD</span>
+        <span id="market-symbol" class="chip chip-neutral ml-1">Spot / USD</span>
         <span class="chip chip-neutral" title="Traders in the market right now"><span id="trader-count" class="num">0</span> traders</span>
         <span id="room-badge" class="hidden chip chip-gold">Room <span id="room-code-display" class="num">------</span></span>
         <span id="mode-badge" class="chip chip-neutral">Discretionary</span>
       </div>
       <div class="flex items-center gap-4">
         <div class="hidden md:flex items-center gap-2 text-[11px] t-faint num">
-          <span>09:30 AM</span>
+          <span id="session-start-label">09:30 AM</span>
           <div class="progress-track w-36 h-1.5" role="progressbar" aria-label="Trading day progress">
             <div id="session-progress" class="progress-fill" style="width: 0%"></div>
           </div>
-          <span>06:00 PM</span>
+          <span id="session-end-label">06:00 PM</span>
         </div>
         <span id="sim-clock" class="clock num">09:30:00 AM</span>
         <button type="button" class="btn btn-ghost btn-icon btn-icon-sm" data-settings aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
@@ -869,9 +910,86 @@
       <div class="space-y-2">
         <button id="btn-edit-strategy" class="hidden btn btn-gold btn-lg">Improve strategy &amp; play again</button>
         <button id="btn-back-to-menu" class="btn btn-primary btn-lg">Back to menu</button>
+        <button type="button" data-support class="btn btn-ghost btn-lg">Help fund the next upgrade</button>
       </div>
     </div>
   </div>
+
+  <!-- PORTFOLIO CHALLENGE: independent from the single-asset trading account -->
+  <div id="portfolio-screen" class="hidden pm-screen flex-1 min-h-0 flex flex-col overflow-hidden">
+    <header class="pm-header">
+      <div>
+        <h1 id="pm-title">Portfolio management</h1>
+        <p id="pm-window">One calendar year · 30 assets</p>
+        <p id="pm-source"></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" data-support class="btn btn-ghost">Support</button>
+        <button type="button" id="pm-exit" class="btn btn-ghost pm-exit">Leave challenge</button>
+      </div>
+    </header>
+    <main class="pm-content">
+      <section class="pm-panel" aria-labelledby="pm-allocations-title">
+        <div class="pm-round-bar">
+          <div><span class="t-muted">Round </span><strong id="pm-round" class="num">—</strong> · <span id="pm-date" class="num">—</span></div>
+          <strong id="pm-countdown" class="num t-gold" role="timer">Waiting…</strong>
+        </div>
+        <div class="progress-track h-1.5 mb-4"><div id="pm-progress" class="progress-fill" style="width: 0%"></div></div>
+        <h2 id="pm-allocations-title">Your target allocations</h2>
+        <p class="pm-help">Use up to 100% of your capital. Save changes before each deadline; your saved percentages are reapplied at every new round. The remainder stays in cash. Long only, fractional shares, no fees.</p>
+        <form id="pm-form">
+          <fieldset id="pm-fields" class="pm-fields">
+            <legend class="sr-only">Asset allocations in percent</legend>
+            <div class="pm-toolbar">
+              <button type="button" id="pm-equal" class="btn btn-ghost">Equal weight</button>
+              <button type="button" id="pm-cash" class="btn btn-ghost">All cash</button>
+              <span id="pm-next-date" class="text-xs t-muted"></span>
+            </div>
+            <div class="pm-table-wrap">
+              <table class="pm-table">
+                <caption class="sr-only">Current adjusted prices, returns already observed, and target portfolio allocations</caption>
+                <thead><tr><th scope="col">Asset</th><th scope="col">Adj. price</th><th scope="col">Last round</th><th scope="col" data-pm-column="year">Year to date</th><th scope="col">Allocation %</th></tr></thead>
+                <tbody id="pm-assets"></tbody>
+              </table>
+            </div>
+            <div class="pm-save-bar"><span id="pm-total" class="num">0% invested · 100% cash</span><button type="submit" id="pm-save" class="btn btn-primary">Save allocations</button></div>
+          </fieldset>
+          <p id="pm-status" class="pm-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+      <aside class="pm-side">
+        <section class="pm-panel" aria-labelledby="pm-performance-title">
+          <h2 id="pm-performance-title">Your performance</h2>
+          <dl class="pm-stats">
+            <div><dt>Portfolio value</dt><dd id="pm-capital" class="num">$10,000.00</dd></div>
+            <div><dt>Total return</dt><dd id="pm-return" class="num">+0.00%</dd></div>
+            <div><dt>Equal-weight benchmark</dt><dd id="pm-benchmark" class="num">+0.00%</dd></div>
+            <div><dt>Maximum drawdown</dt><dd id="pm-drawdown" class="num">0.00%</dd></div>
+          </dl>
+          <canvas id="pm-chart" class="pm-chart" role="img" aria-label="Portfolio value over the observed trading days"></canvas>
+          <p class="pm-help">Start: $10,000. Cash return: 0%. The benchmark buys all 30 assets in equal amounts at the start and holds them for the year.</p>
+        </section>
+        <section class="pm-panel" aria-labelledby="pm-standings-title"><h2 id="pm-standings-title">Lobby standings</h2><div id="pm-standings"></div></section>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="support-dialog" class="support-dialog" aria-labelledby="support-title">
+    <h2 id="support-title" class="serif text-[28px]">Build the next chapter</h2>
+    <p class="mt-3">Tomorrow Markets is an independent project. Your contributions will help fund:</p>
+    <ul>
+      <li>Dedicated server space and our own domain.</li>
+      <li>A dedicated database, caching and faster loading.</li>
+      <li>More room for players and larger trading lobbies.</li>
+    </ul>
+    <p>These are planned improvements funded by community support.</p>
+    <p class="mt-3">Recipient: <strong data-donation-recipient>Project creator</strong></p>
+    <p data-donation-status class="mt-2" role="status"></p>
+    <div class="support-dialog-actions">
+      <a data-donation-link hidden class="btn btn-gold" target="_blank" rel="noopener noreferrer">Continue to donate</a>
+      <button type="button" data-support-close class="btn btn-ghost">Close</button>
+    </div>
+  </dialog>
 
   <!-- ES Module Entry Point -->
   <script type="module" src="./src/main.js"></script>
