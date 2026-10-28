@@ -1,13 +1,3 @@
-Updates
-- Donations setup
-- historical data setup for trading challenges
-- portfolio management challenges + historical data
-- 
-
-
-
-
-
 These patch notes are to be taken with a grain of salt, as I will have to very publicly and very obviously explain that these are not going to be the public patch notes.
 I have made considerable reflections, developments and feature designs in advance and none of these will go up in the noted order as "content sharing" is more important
 in order for me to grab a hold of an audience on social media before actually implementing the work and features I myself desire.
@@ -51,16 +41,29 @@ The goal was to add the core gameplay and game setup, such that players could ge
 - Externalised core systems so individual pieces can be updated independently, *this also gives space for optimisation of components.*
 - UI/UX overhaul and general design pass, added different layouts for original layout and 2 dark modes for ease on eyes.
 
-
 ### User experience
 - **Eye-strain feedback fix:** rolling out white, black (low-eyestrain), and navy themes
 - Randomised trader usernames so players aren't all "trader_1", *this will make players recognise themselves and actually pick a name.*
 - Added "loading screen notes" for each player to have something silly to do while waiting for a game to start. *I want each part of the experience to be entertaining.*
 
-## Version 1.0.x (maintenance)
-These patches have already been predetermined to be patch fix notes.
-- 1.0.1: bugfixes
-- 1.0.2+: minor UI polish, quality-of-life tweaks, small bugfixes
+
+
+
+
+
+## Version 1.1
+Updates
+
+### utilities
+- [ ] Donations setup
+- [ ] update a few UI corrections
+- [ ] improve trading UI for algorithmic trading(remove the order setup on the right when doing algo)
+
+### game modes
+- [ ] historical data setup for trading challenges
+- [ ] portfolio management challenges + historical data
+- [ ] Live PM run
+- [ ] Backtest setup fr algorithmic trading
 
 
 
