@@ -1,4 +1,53 @@
 [hidden] { display: none !important; }
+.utility-page { display: block; height: auto; min-height: 100vh; overflow: auto; }
+.utility-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 1rem 1.5rem; gap: 1rem; }
+.utility-header .wordmark { font-size: 23px; text-decoration: none; }
+.utility-header nav { display: flex; gap: .5rem; flex-wrap: wrap; }
+.utility-main { max-width: 1280px; margin: 0 auto; padding: 1.7rem; }
+.utility-main h1 { font: 400 36px 'Source Serif 4',Georgia,serif; margin-bottom: .6rem; }
+.utility-intro { font-size: 13px; color: var(--muted); line-height: 1.7; margin: .8rem 0; }
+.utility-intro a { text-decoration: underline; }
+.utility-filters { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); align-items: end; gap: .8rem; padding: 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.utility-main label { font-size: 12px; color: var(--muted); }
+.utility-main label .field { display: block; margin-top: .35rem; }
+.utility-tools { display: flex; align-items: end; gap: .7rem; flex-wrap: wrap; margin: 1rem 0; }
+.utility-table-wrap { overflow-x: auto; }
+.utility-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.utility-table th { color: var(--muted); font-weight: 500; text-align: left; }
+.utility-table th,.utility-table td { padding: .7rem .6rem; border-bottom: 1px solid var(--line); }
+.live-layout { display: grid; grid-template-columns: minmax(0,1fr) 21rem; gap: 1.2rem; align-items: start; }
+.live-side { display: grid; gap: 1rem; }
+.live-side .pm-stats dd { font-size: 15px; }
+@media (max-width: 900px) { .utility-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } .live-layout { grid-template-columns: 1fr; } }
+@media (max-width: 500px) { .utility-main { padding: 1rem; } .utility-filters { grid-template-columns: 1fr; } }
+/* One accent for the primary lobby actions in each theme. */
+:root, :root[data-theme="light"] { --action-fill: #8A6A1F; --action-hover: #755A1A; }
+:root[data-theme="black"] { --action-fill: #2F6FEB; --action-hover: #245FCF; }
+:root[data-theme="navy"] { --action-fill: #5D66E8; --action-hover: #5059D1; }
+.btn.btn-primary, .btn.btn-gold, #lobby-screen .btn-primary, #lobby-screen .btn-gold { background: var(--action-fill); color: #fff; }
+.btn.btn-primary:hover, .btn.btn-gold:hover, #lobby-screen .btn-primary:hover, #lobby-screen .btn-gold:hover { background: var(--action-hover); }
+.arena-row { display: flex; flex-direction: column; gap: .35rem; margin-top: .6rem; }
+#arena-panel .btn { margin-top: .8rem; }
+#trading-screen.is-algorithmic #order-entry-panel { display: none !important; }
+#trading-screen.is-algorithmic .positions-panel { min-height: 26rem; }
+#trading-screen.is-algorithmic .trading-grid { grid-template-columns: minmax(0, 7fr) minmax(15rem, 2.3fr) minmax(17rem, 2.4fr); }
+#trading-screen > header { height: auto; min-height: 3rem; padding-top: .45rem; padding-bottom: .45rem; gap: .5rem; flex-wrap: wrap; }
+#trading-screen > header > div { flex-wrap: wrap; gap: .6rem; }
+.simple-builder { overflow-y: auto; min-height: 18rem; }
+.simple-help { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: .8rem; }
+.simple-block { padding: 1rem; margin-bottom: 1rem; background: var(--card-soft); border: 1px solid var(--line-strong); border-radius: 12px; }
+.simple-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: .7rem; }
+.simple-title h3 { font-size: 16px; font-weight: 600; }
+.simple-title label { font-size: 12px; color: var(--muted); }
+.simple-condition { margin: .7rem 0; padding: .7rem; background: var(--card); border: 1px solid var(--line); border-radius: 9px; }
+.simple-rule-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .55rem; }
+.simple-rule-grid label, .simple-block > label { display: block; font-size: 10px; color: var(--muted); }
+.simple-rule-grid .field, .simple-block > label .field { font-size: 12px; margin-top: .2rem; }
+.simple-operand { display: contents; }
+.simple-condition > button { margin-top: .6rem; }
+.simple-order-settings { margin: .8rem 0; }
+@media (max-width: 1100px) { #trading-screen.is-algorithmic .trading-grid { grid-template-columns: minmax(0, 6fr) minmax(13rem, 2.5fr) minmax(15rem, 3fr); } }
+@media (max-width: 650px) { .simple-rule-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 .support-card { max-width: 32rem; padding: 1.2rem 1.4rem; margin-top: 2rem; background: var(--lobby-card); border: 1px solid var(--line-strong); border-radius: 16px; }
 .support-card h2 { font-size: 17px; font-weight: 600; margin-bottom: .45rem; }
 .support-card p { color: var(--muted); font-size: 13px; line-height: 1.6; }
@@ -10,6 +59,8 @@
 .support-dialog-actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: 1.2rem; }
 .challenge-settings { display: grid; gap: .7rem; padding: .9rem; background: var(--card-soft); border: 1px solid var(--line); border-radius: 12px; }
 .challenge-settings .field { width: 100%; font-size: 12px; }
+.session-details > summary { cursor: pointer; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.session-details[open] > summary { margin-bottom: .6rem; }
 .code-box > span { flex-wrap: wrap; }
 #room-mode-chip { white-space: normal; text-align: center; line-height: 1.4; }
 #mode-badge { display: inline-block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
