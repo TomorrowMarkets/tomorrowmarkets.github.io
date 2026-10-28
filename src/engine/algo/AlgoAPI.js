@@ -30,7 +30,7 @@ function pctReturns(closes) {
 // account: { cash, shares, avgEntry, realizedPnL, unrealized(mid) }.
 export function buildSnapshot({
   priceHistory = [], bids = [], asks = [], mid = null, openOrders = [],
-  account, simTimeStr = null, round = 0
+  account, simTimeStr = null, round = 0, dataSource = 'simulated', symbol = 'Spot / USD'
 }) {
   const bars = priceHistory.slice(-MAX_BARS).map((p) => ({
     time: p.simTimeStr || null,
@@ -56,6 +56,8 @@ export function buildSnapshot({
 
   return {
     round,
+    data_source: dataSource,
+    symbol,
     time: simTimeStr,
     bars,
     open: bars.map((b) => b.open),
