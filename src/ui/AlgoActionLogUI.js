@@ -84,7 +84,7 @@ export class AlgoActionLogUI {
       : `Round ${r.round} done, market running`;
     this.strip.innerHTML = `
       <span class="algo-status-dot ${dot}"></span>
-      <span class="t-ink font-medium">${s.language === 'r' ? 'R' : 'Python'} strategy</span>
+      <span class="t-ink font-medium">${s.language === 'simple' ? 'Simple' : s.language === 'r' ? 'R' : 'Python'} strategy</span>
       <span class="t-muted truncate">${escapeHtml(label)}</span>
       ${round ? `<span class="ml-auto t-faint num shrink-0">${escapeHtml(round)}</span>` : ''}`;
   }
@@ -129,3 +129,4 @@ export class AlgoActionLogUI {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+

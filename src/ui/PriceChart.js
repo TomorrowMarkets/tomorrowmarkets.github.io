@@ -14,6 +14,7 @@
 // Settings (chart type, timeframe, indicators) are remembered per browser.
 
 import { resample } from '../engine/bars.js';
+import { SESSION_SECONDS } from '../engine/session.js';
 import { sma, ema, bollinger, rsi, macd, vwap } from '../engine/indicators.js';
 import { themeColors, onThemeChange } from './theme.js';
 
@@ -187,6 +188,19 @@ export class PriceChart {
     this.renderMenu();
     this.renderLegend();
 
+    eventBus.on('SESSION_CONFIG', (plan) => {
+      this.originSecs = plan.originSecs || 34200; this.secsPerTick = plan.secsPerTick;
+      this.totalTicks = plan.totalTicks; this.sessionDays = plan.sessionDays;
+      this.history = []; this.settings.timeframe = 'ALL';
+      const names = {'1M':'5M','5M':'10M','10M':'15M','1H':'1H','ALL':'All'};
+      const seconds = {'1M':300,'5M':600,'10M':900,'1H':3600};
+      document.querySelectorAll('[data-tf]').forEach(btn => {
+        btn.textContent = plan.secsPerTick >= 300 ? names[btn.dataset.tf] : btn.dataset.tf === 'ALL' ? 'All' : btn.dataset.tf;
+        btn.hidden = plan.sessionDays > 1 && btn.dataset.tf === '1H';
+        btn.disabled = plan.secsPerTick >= 300 && seconds[btn.dataset.tf] < plan.secsPerTick;
+        btn.classList.toggle('is-active', btn.dataset.tf === 'ALL');
+      });
+    });
     eventBus.on('TICK', (data) => this.onTick(data));
     window.addEventListener('resize', () => this.requestDraw());
     document.addEventListener('visibilitychange', () => this.requestDraw());
@@ -196,6 +210,21 @@ export class PriceChart {
       this.renderLegend();
       this.requestDraw();
     });
+  }
+
+  timeframe() {
+    if (this.secsPerTick < 300) return TIMEFRAMES[this.settings.timeframe];
+    const seconds = { '1M':300, '5M':600, '10M':900, '1H':3600 }[this.settings.timeframe];
+    if (!seconds) return { window:null, perBar:1 };
+    const perBar = Math.max(1, Math.ceil(seconds / this.secsPerTick));
+    return { window:48 * perBar, perBar };
+  }
+
+  labelTime(seconds, withSeconds=false) {
+    if (!(this.sessionDays > 1)) return hhmm(seconds, withSeconds);
+    const elapsed = Math.max(0, seconds-this.originSecs);
+    const day = Math.min(this.sessionDays-1, Math.floor(elapsed/SESSION_SECONDS));
+    return `D${day+1} ${hhmm(this.originSecs+elapsed-day*SESSION_SECONDS, withSeconds)}`;
   }
 
   // ---- settings -----------------------------------------------------------
@@ -513,9 +542,9 @@ export class PriceChart {
     if (ohlc) {
       ohlc.style.visibility = bar ? 'visible' : 'hidden';
       if (bar) {
-        const tf = TIMEFRAMES[this.settings.timeframe];
+        const tf = this.timeframe();
         const color = bar.close >= bar.open ? COLORS.up : COLORS.down;
-        ohlc.querySelector('.cl-time').textContent = hhmm(bar.t, tf.perBar * this.secsPerTick < 60);
+        ohlc.querySelector('.cl-time').textContent = this.labelTime(bar.t, tf.perBar * this.secsPerTick < 60);
         for (const f of ['open', 'high', 'low', 'close']) {
           const el = ohlc.querySelector(`[data-f="${f}"]`);
           el.textContent = bar[f].toFixed(2);
@@ -561,7 +590,7 @@ export class PriceChart {
   }
 
   recompute() {
-    const tf = TIMEFRAMES[this.settings.timeframe];
+    const tf = this.timeframe();
     this.bars = resample(this.history, tf.perBar, { originSecs: this.originSecs, secsPerTick: this.secsPerTick });
     const closes = this.bars.map((b) => b.close);
     this.series = new Map();
@@ -602,7 +631,7 @@ export class PriceChart {
     }
 
     // Panes
-    const tf = TIMEFRAMES[this.settings.timeframe];
+    const tf = this.timeframe();
     const plotW = Math.max(40, W - AXIS_W);
     const oscInds = this.settings.indicators.filter((i) => INDICATORS[i.kind].pane === 'own');
     const avail = H - TIME_H;
@@ -692,7 +721,7 @@ export class PriceChart {
       if (t < this.originSecs || t > dayEnd) continue;
       const x = Math.round(xT(t)) + 0.5;
       if (x < 0 || x > plotW) continue;
-      const label = hhmm(t);
+      const label = this.labelTime(t);
       const half = ctx.measureText(label).width / 2;
       ctx.strokeStyle = COLORS.grid;
       ctx.beginPath();
@@ -876,7 +905,7 @@ export class PriceChart {
         if (pane && pane.scale) this.tag(ctx, plotW, this.hover.y, fmtValue(pane.scale.inv(this.hover.y), pane.ind.kind === 'rsi' ? 1 : 3), COLORS.tag, COLORS.tagText);
       }
       if (x != null) {
-        const tText = hhmm(bars[hoverIdx].t, span < 60);
+        const tText = this.labelTime(bars[hoverIdx].t, span < 60);
         ctx.font = FONT;
         const tw = ctx.measureText(tText).width + 10;
         const tx = clamp(x - tw / 2, 0, plotW - tw);
@@ -1047,3 +1076,4 @@ export class PriceChart {
     ctx.closePath();
   }
 }
+

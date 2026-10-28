@@ -1,4 +1,5 @@
 import { loadCatalog, fetchJSON, publicSettings } from '../services/data-catalog.js';
+import { selectHistoricalSessions } from '../engine/session.js';
 import { validateOrderbookDataset } from '../engine/HistoricalMarket.js';
 import { validatePortfolioDataset, chooseAnnualWindow } from '../engine/PortfolioChallenge.js';
 
@@ -8,8 +9,7 @@ export class ChallengeSetup {
     this.manifestPath = manifestPath;
     this.catalogPromise = null;
     this.kind = 'solo';
-    this.byId('setup-source').addEventListener('change', () => this.render());
-    this.byId('setup-portfolio-dataset').addEventListener('change', () => this.render());
+    this.byId('challenge-settings').addEventListener('change', () => this.render());
   }
   byId(id) { return this.root.getElementById(id); }
 
@@ -22,6 +22,12 @@ export class ChallengeSetup {
 
   async show(kind) {
     this.kind = kind;
+    this.byId('challenge-settings-details').hidden = kind === 'join';
+    this.byId('challenge-settings-details').open = kind === 'backtest';
+    this.byId('setup-source').disabled = kind === 'backtest';
+    if (kind === 'backtest') this.byId('setup-source').value = 'historical';
+    this.byId('setup-history-start-wrap').hidden = kind !== 'backtest';
+    for (const id of ['mode-discretionary','mode-portfolio','mode-arena']) this.byId(id).hidden = kind === 'backtest';
     this.byId('challenge-settings').hidden = kind === 'join';
     this.byId('setup-join-note').hidden = kind !== 'join';
     if (kind === 'join') return;
@@ -43,6 +49,7 @@ export class ChallengeSetup {
   }
 
   render() {
+    this.byId('setup-summary').textContent = `Session settings · ${this.byId('setup-duration').value} min · ${this.byId('setup-days').value} trading day(s) · ${this.byId('setup-source').value === 'historical' ? 'Historical' : 'Simulated'}`;
     this.byId('setup-book-wrap').hidden = this.byId('setup-source').value !== 'historical';
     const option = this.byId('setup-portfolio-dataset').selectedOptions[0];
     this.byId('setup-status').textContent = option?.textContent.includes('DEMO')
@@ -54,6 +61,9 @@ export class ChallengeSetup {
     const settings = publicSettings({
       dataSource: mode === 'portfolio' ? 'historical' : this.byId('setup-source').value,
       durationMinutes: Number(this.byId('setup-duration').value),
+      sessionDays: Number(this.byId('setup-days').value),
+      barMinutes: Number(this.byId('setup-bar-minutes').value),
+      arenaLearning: this.byId('setup-arena-learning').checked,
       portfolioStride: Number(this.byId('setup-stride').value)
     });
     // Joining never loads a local dataset or dictates the host's settings.
@@ -65,9 +75,10 @@ export class ChallengeSetup {
     const entry = entries.find((item) => item.id === id);
     if (!entry) throw new Error(`No ${mode === 'portfolio' ? 'portfolio' : 'orderbook'} dataset is installed. Add one to data/manifest.json first.`);
     const raw = await fetchJSON(entry.url);
-    const data = mode === 'portfolio' ? validatePortfolioDataset(raw) : validateOrderbookDataset(raw);
+    const data = mode === 'portfolio' ? validatePortfolioDataset(raw) : selectHistoricalSessions(validateOrderbookDataset(raw), settings.sessionDays,
+      this.kind === 'backtest' ? () => 0 : Math.random, this.kind === 'backtest' ? this.byId('setup-history-start').value || null : null);
     if (mode === 'portfolio') chooseAnnualWindow(data, () => 0); // validate coverage before leaving the menu
     return { settings: publicSettings({ ...settings, datasetId: entry.id, datasetLabel: entry.label,
-      demo: entry.demo || data.demo }), data };
+      demo: entry.demo || data.demo, windowStart: data.windowStart, windowEnd: data.windowEnd }), data };
   }
 }

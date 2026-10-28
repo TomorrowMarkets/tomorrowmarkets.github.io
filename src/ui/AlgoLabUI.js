@@ -7,11 +7,14 @@
 // and run it again.
 import { AlgoRunner } from '../engine/algo/AlgoRunner.js';
 import { sampleSnapshot } from '../engine/algo/AlgoAPI.js';
+import { defaultSimpleStrategy } from '../engine/algo/SimpleEngine.js';
+import { SimpleStrategyUI } from './SimpleStrategyUI.js';
 
 const DRAFT_KEY = (lang) => `tomorrowMarkets.algoDraft.${lang}`;
 const LAST_LANG_KEY = 'tomorrowMarkets.algoLastLang';
 
 const TEMPLATES = {
+  simple: JSON.stringify(defaultSimpleStrategy(), null, 2),
   python: `# on_tick(data) is called at every decision round. data holds:
 #   data["close"], ["open"], ["high"], ["low"], ["volume"]  lists, oldest first
 #   data["returns"]                                         bar-to-bar % change
@@ -87,7 +90,8 @@ export class AlgoLabUI {
     this.enterBtn = $('btn-algo-enter');
     this.backBtn = $('btn-algo-back');
     this.resetBtn = $('btn-algo-template');
-    this.refBlocks = { python: $('algo-reference-python'), r: $('algo-reference-r') };
+    this.refBlocks = { python: $('algo-reference-python'), r: $('algo-reference-r'), simple: $('algo-reference-simple') };
+    this.simpleUI = new SimpleStrategyUI($('simple-strategy-builder'), (code) => { this.codeArea.value = code; this.saveDraft(); });
 
     this.language = 'python';
     this.onReady = null; // (runner) => void, called with a tested AlgoRunner
@@ -112,12 +116,16 @@ export class AlgoLabUI {
         this.fileInput.value = '';
         if (!file) return;
         const ext = (file.name.split('.').pop() || '').toLowerCase();
-        const lang = ext === 'r' ? 'r' : ext === 'py' ? 'python' : this.language;
+        const lang = ext === 'json' ? 'simple' : ext === 'r' ? 'r' : ext === 'py' ? 'python' : this.language;
         if (lang !== this.language) {
           this.saveDraft();
           this.setLanguage(lang);
         }
         this.codeArea.value = await file.text();
+        if (lang === 'simple') {
+          try { this.simpleUI.set(this.codeArea.value); }
+          catch (err) { this.setConsole([{ level: 'error', text: err.message }]); return; }
+        }
         this.saveDraft();
         this.setConsole([{ level: 'info', text: `Loaded ${file.name}.` }]);
       });
@@ -138,6 +146,7 @@ export class AlgoLabUI {
     if (this.resetBtn) {
       this.resetBtn.addEventListener('click', () => {
         this.codeArea.value = TEMPLATES[this.language];
+        if (this.language === 'simple') this.simpleUI.set(this.codeArea.value);
         this.saveDraft();
         this.setConsole(null);
       });
@@ -161,7 +170,7 @@ export class AlgoLabUI {
     this.setConsole(null);
     this.setStatus(note);
     if (this.screen) this.screen.classList.remove('hidden');
-    if (this.codeArea) this.codeArea.focus();
+    if (this.codeArea && this.language !== 'simple') this.codeArea.focus();
   }
 
   close() {
@@ -178,6 +187,12 @@ export class AlgoLabUI {
     let draft = null;
     try { draft = localStorage.getItem(DRAFT_KEY(lang)); } catch (err) { /* storage unavailable */ }
     this.codeArea.value = draft || TEMPLATES[lang];
+    this.codeArea.classList.toggle('hidden', lang === 'simple');
+    this.simpleUI.root.hidden = lang !== 'simple';
+    if (lang === 'simple') {
+      try { this.simpleUI.set(this.codeArea.value); }
+      catch { this.codeArea.value = TEMPLATES.simple; this.simpleUI.set(this.codeArea.value); }
+    }
     this.setConsole(null);
   }
 
@@ -187,7 +202,7 @@ export class AlgoLabUI {
 
   async testAndEnter() {
     if (this.validating) return;
-    const code = this.codeArea.value;
+    const code = this.language === 'simple' ? this.simpleUI.value() : this.codeArea.value;
     if (!code.trim()) {
       this.setConsole([{ level: 'error', text: 'Write or upload a strategy first.' }]);
       return;
@@ -249,3 +264,4 @@ function describeAction(a) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+

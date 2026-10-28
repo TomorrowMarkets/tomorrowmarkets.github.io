@@ -69,3 +69,4 @@ export class TradeHistoryUI {
     this.summary.textContent = `${this.fills} ${this.fills === 1 ? 'fill' : 'fills'} · realized ${r < 0 ? '-' : '+'}$${Math.abs(r).toFixed(2)}`;
   }
 }
+

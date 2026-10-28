@@ -331,3 +331,4 @@ export function mountLobbyFacts(container, { facts = LOBBY_FACTS, intervalMs = 1
     root.remove();
   };
 }
+

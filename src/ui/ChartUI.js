@@ -130,3 +130,4 @@ export class ChartUI {
     this.ctx.fillText(`$${min.toFixed(2)}`, 8, height - 6);
   }
 }
+
