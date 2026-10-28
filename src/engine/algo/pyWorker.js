@@ -107,3 +107,4 @@ self.onmessage = async (e) => {
     self.postMessage({ id, ok: false, error: formatError(err) });
   }
 };
+

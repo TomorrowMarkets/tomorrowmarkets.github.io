@@ -6,6 +6,7 @@
 // matching and multiplayer path as a discretionary one.
 import { PyEngine } from './PyEngine.js';
 import { REngine } from './REngine.js';
+import { SimpleEngine } from './SimpleEngine.js';
 
 export const DECISION_BUDGET_MS = 60000; // up to a minute per decision
 const MAX_ERROR_STREAK = 5;              // stop a script that errors this many rounds in a row
@@ -13,7 +14,7 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 export class AlgoRunner {
   constructor(language) {
-    this.language = language === 'r' ? 'r' : 'python';
+    this.language = ['r', 'simple'].includes(language) ? language : 'python';
     this.budgetMs = DECISION_BUDGET_MS;
     this.engine = this._newEngine();
     this.code = null;
@@ -28,11 +29,11 @@ export class AlgoRunner {
   }
 
   get label() {
-    return this.language === 'r' ? 'R' : 'Python';
+    return this.language === 'simple' ? 'Simple' : this.language === 'r' ? 'R' : 'Python';
   }
 
   _newEngine() {
-    return this.language === 'r' ? new REngine() : new PyEngine();
+    return this.language === 'simple' ? new SimpleEngine() : this.language === 'r' ? new REngine() : new PyEngine();
   }
 
   async init(code) {
@@ -124,11 +125,11 @@ export class AlgoRunner {
     const side = sideStr === 'BUY' ? 'BUY' : sideStr === 'SELL' ? 'SELL' : null;
     const qty = Math.floor(Number(raw.qty));
     if (!side) return this._log(`Ignored an order with side "${raw.side}". Use "buy" or "sell".`, 'error');
-    if (!(qty >= 1)) return this._log(`Ignored an order for ${raw.qty} shares. Quantity must be at least 1.`, 'error');
+    if (!Number.isSafeInteger(qty) || qty < 1) return this._log(`Ignored an order for ${raw.qty} shares. Quantity must be at least 1.`, 'error');
 
     const isLimit = kind === 'LIMIT';
     const price = isLimit ? Math.round(Number(raw.price) * 100) / 100 : 0;
-    if (isLimit && !(price > 0)) return this._log(`Ignored a limit order at price ${raw.price}.`, 'error');
+    if (isLimit && (!Number.isFinite(price) || price <= 0)) return this._log(`Ignored a limit order at price ${raw.price}.`, 'error');
 
     this._log(`${side === 'BUY' ? 'Buy' : 'Sell'} ${qty} ${isLimit ? `limit @ $${price.toFixed(2)}` : 'at market'}`, side === 'BUY' ? 'buy' : 'sell');
     if (this.onAction) {
@@ -157,3 +158,4 @@ export class AlgoRunner {
     try { this.engine.terminate(); } catch (err) { /* best effort */ }
   }
 }
+

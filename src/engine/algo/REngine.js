@@ -108,3 +108,4 @@ export class REngine {
     if (capture.output.some((o) => o.type === 'error')) throw new Error(fallback);
   }
 }
+

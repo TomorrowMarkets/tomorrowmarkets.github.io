@@ -54,9 +54,21 @@ export function buildSnapshot({
     : (bestBid != null && bestAsk != null) ? (bestBid + bestAsk) / 2
     : (close.length ? close[close.length - 1] : null);
 
+  let count = 0, mean = 0, m2 = 0, volumeTotal = 0, gain = 0, loss = 0, previous = null, firstPrice = null;
+  for (const point of priceHistory) {
+    const value = point.price;
+    if (!Number.isFinite(value)) continue;
+    firstPrice ??= value; count += 1;
+    const delta = value - mean; mean += delta / count; m2 += delta * (value - mean);
+    if (previous != null) { gain += Math.max(0, value - previous); loss += Math.max(0, previous - value); }
+    previous = value; volumeTotal += Number.isFinite(point.volume) ? point.volume : 0;
+  }
   return {
     round,
+    bar_index: priceHistory.length - 1,
+    cumulative: { count, mean, std: count ? Math.sqrt(Math.max(0, m2 / count)) : 0, volume: volumeTotal, gain, loss, firstPrice },
     data_source: dataSource,
+    volume_available: dataSource !== 'historical' || !priceHistory.some(point => point.volumeAvailable === false),
     symbol,
     time: simTimeStr,
     bars,
