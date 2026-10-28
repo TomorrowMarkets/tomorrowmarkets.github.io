@@ -1,7 +1,6 @@
 import { PeerNetwork } from './net/PeerNetwork.js';
 import { OrderBook } from './engine/OrderBook.js';
-import { BotFleet } from './engine/BotFleet.js';
-import { TickAccumulator } from './engine/bars.js';
+import { GameLoop, PulseClock } from './engine/GameLoop.js';
 import { PriceChart } from './ui/PriceChart.js';
 import { mountLobbyFacts } from './ui/lobby-facts.js';
 import { createRunTracker, isConfigured as leaderboardLive } from './services/leaderboard-api.js';
@@ -15,6 +14,12 @@ import { AlgoActionLogUI } from './ui/AlgoActionLogUI.js';
 import { TradeHistoryUI } from './ui/TradeHistoryUI.js';
 import { mountSettingsButtons, onThemeChange, themeColors } from './ui/theme.js';
 import { mountHandleField, rememberHandle } from './ui/player-name.js';
+import { APP_CONFIG } from './config/app-config.js';
+import { mountDonations } from './ui/donations.js';
+import { ChallengeSetup } from './ui/ChallengeSetup.js';
+import { PortfolioUI } from './ui/PortfolioUI.js';
+import { PortfolioChallenge } from './engine/PortfolioChallenge.js';
+import { publicSettings } from './services/data-catalog.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -26,8 +31,6 @@ const GAME_DURATION_MINUTES = 10;             // real-world length of the whole 
 const TOTAL_TICKS = (SESSION_CLOSE_SECS - SESSION_OPEN_SECS) / SIM_SECS_PER_TICK; // 2040
 const STARTING_CASH = 10000;
 const BOOK_LEVELS = 15;             // price levels per side shown in the order book (and sent to clients)
-const MAX_BACKLOG_TICKS = 40;       // a stall longer than this pauses the day instead of fast-forwarding it
-const NOISE_ORDER_TTL_TICKS = 40;   // noise-bot limit orders expire after 10 sim-minutes (keeps the book small)
 
 const HUMAN_ACTIONS = new Set(['SUBMIT_ORDER', 'CANCEL_ORDER', 'MODIFY_ORDER', 'MODIFY_BRACKET', 'CANCEL_BRACKET', 'CANCEL_ALL']);
 
@@ -1208,7 +1211,7 @@ class PathsBackground {
 }
 
 // ===================================================================
-// 7. TIME-SCALED GAME LOOP ENGINE
+// 7. TIME-SCALED GAME LOOP ENGINE: see ./engine/GameLoop.js
 // ===================================================================
 
 // Browsers clamp setInterval in background tabs to ~1/second (sometimes far
@@ -1216,193 +1219,6 @@ class PathsBackground {
 // out. Timers inside a Web Worker aren't clamped that way, so the worker
 // just sends "pulses" and the main thread does the work. If Workers are
 // unavailable we fall back to a normal interval.
-class PulseClock {
-  constructor(intervalMs, onPulse) {
-    this.intervalMs = intervalMs;
-    this.onPulse = onPulse;
-    this.worker = null;
-    this.workerUrl = null;
-    this.timer = null;
-  }
-
-  start() {
-    this.stop();
-    try {
-      const src = 'let t=null;onmessage=(e)=>{clearInterval(t);t=null;if(e.data>0)t=setInterval(()=>postMessage(1),e.data);};';
-      this.workerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-      this.worker = new Worker(this.workerUrl);
-      this.worker.onmessage = () => this.onPulse();
-      this.worker.onerror = () => this.useFallback();
-      this.worker.postMessage(this.intervalMs);
-    } catch (err) {
-      this.useFallback();
-    }
-  }
-
-  useFallback() {
-    this.stopWorker();
-    if (!this.timer) this.timer = setInterval(() => this.onPulse(), this.intervalMs);
-  }
-
-  stopWorker() {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-    if (this.workerUrl) {
-      URL.revokeObjectURL(this.workerUrl);
-      this.workerUrl = null;
-    }
-  }
-
-  stop() {
-    this.stopWorker();
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-  }
-}
-
-class GameLoop {
-  constructor(orderBook, eventBus, { durationMinutes = GAME_DURATION_MINUTES, afterStep, onPulse, onFinish, onNews, shouldPause, onPaused } = {}) {
-    this.orderBook = orderBook;
-    this.fleet = new BotFleet(orderBook, eventBus, {
-      simSecsPerTick: SIM_SECS_PER_TICK,
-      openSecs: SESSION_OPEN_SECS,
-      closeSecs: SESSION_CLOSE_SECS,
-      onNews
-    });
-    this.afterStep = afterStep;
-    this.onPulse = onPulse;
-    this.onFinish = onFinish;
-    this.shouldPause = shouldPause || null; // (tick) => bool: stop after this tick until resume()
-    this.onPaused = onPaused || null;
-    this.paused = false;
-    this.pausedAt = 0;
-
-    this.totalTicks = TOTAL_TICKS;
-    this.tickIntervalMs = (durationMinutes * 60 * 1000) / this.totalTicks; // ≈294 ms for 10 minutes
-
-    this.ticksDone = 0;
-    this.simulatedSeconds = SESSION_OPEN_SECS;
-    this.priceHistory = [];
-    this.running = false;
-
-    // Every trade between two ticks feeds that tick's high, low and volume.
-    this.tickBar = new TickAccumulator();
-    this.lastClose = null;
-    this.collecting = false;
-    eventBus.on('TRADE', (t) => {
-      if (this.collecting) this.tickBar.addTrade(t.price, t.qty);
-    });
-    this.finished = false;
-    this.startedAt = 0;
-
-    this.clock = new PulseClock(Math.min(100, this.tickIntervalMs / 3), () => this.pump());
-  }
-
-  progress() {
-    return this.ticksDone / this.totalTicks;
-  }
-
-  start() {
-    this.ticksDone = 0;
-    this.simulatedSeconds = SESSION_OPEN_SECS;
-    this.finished = false;
-    this.paused = false;
-    this.tickBar.reset();
-    this.lastClose = null;
-    this.collecting = true;
-    this.priceHistory = [this.makePoint()];
-    this.fleet.start(this.priceHistory); // 1,000 traders arrive and build the opening book
-    this.startedAt = performance.now();
-    this.running = true;
-    this.clock.start();
-    if (this.onPulse) this.onPulse([this.priceHistory[0]]);
-  }
-
-  stop() {
-    this.running = false;
-    this.paused = false;
-    this.collecting = false;
-    this.clock.stop();
-  }
-
-  // Freeze the day right after the tick just played. The wall clock is
-  // pinned to that tick, so resuming neither skips ticks nor bursts through
-  // the ones that would have been due during the pause.
-  pause() {
-    if (this.paused || !this.running) return;
-    this.paused = true;
-    this.pausedAt = this.startedAt + this.ticksDone * this.tickIntervalMs;
-    this.clock.stop();
-  }
-
-  resume() {
-    if (!this.paused || !this.running) return;
-    this.startedAt += performance.now() - this.pausedAt;
-    this.paused = false;
-    this.clock.start();
-  }
-
-  // Runs however many ticks the wall clock says are due, so the day always
-  // lasts GAME_DURATION_MINUTES even if pulses arrive late or bunched up.
-  pump() {
-    if (!this.running || this.paused) return;
-    let due = Math.min(this.totalTicks, Math.floor((performance.now() - this.startedAt) / this.tickIntervalMs));
-    const backlog = due - this.ticksDone;
-    if (backlog > MAX_BACKLOG_TICKS) {
-      // Host was frozen (sleeping laptop, suspended tab). Pause instead of fast-forwarding.
-      const skip = backlog - MAX_BACKLOG_TICKS;
-      this.startedAt += skip * this.tickIntervalMs;
-      due -= skip;
-    }
-
-    const points = [];
-    while (this.ticksDone < due) {
-      points.push(this.step());
-      if (this.shouldPause && this.ticksDone < this.totalTicks && this.shouldPause(this.ticksDone)) {
-        this.pause();
-        break;
-      }
-    }
-    if (points.length && this.onPulse) this.onPulse(points);
-    if (this.paused) {
-      if (this.onPaused) this.onPaused(this.ticksDone);
-      return;
-    }
-
-    if (this.ticksDone >= this.totalTicks) {
-      this.finished = true;
-      this.stop();
-      this.fleet.endDay(this.priceHistory); // Tomorrow AI's final reward for the day
-      if (this.onFinish) this.onFinish();
-    }
-  }
-
-  step() {
-    this.ticksDone += 1;
-    this.simulatedSeconds = SESSION_OPEN_SECS + this.ticksDone * SIM_SECS_PER_TICK;
-    this.orderBook.currentTick = this.ticksDone;
-    this.orderBook.expireOrders(this.ticksDone);
-    this.fleet.onTick({ tick: this.ticksDone, simSeconds: this.simulatedSeconds, history: this.priceHistory });
-    if (this.afterStep) this.afterStep();
-    const point = this.makePoint();
-    this.priceHistory.push(point);
-    return point;
-  }
-
-  // One bar per tick: `price` is the closing mid (the bots read it), plus
-  // open/high/low/volume/value for candles and indicators (see engine/bars.js).
-  makePoint() {
-    const close = this.orderBook.getMidPrice();
-    const bar = this.tickBar.take(this.lastClose ?? close, close);
-    this.lastClose = close;
-    return { ...bar, simTimeStr: formatSimTime(this.simulatedSeconds), simSecs: this.simulatedSeconds };
-  }
-}
-
 // ===================================================================
 // TOMORROW AI: one learning trader per game.
 //   - Starts from the published long-term brain (assets/ai-brain.json).
@@ -1511,7 +1327,12 @@ function initApp() {
   const tokenToId = new Map();
   let runTracker = null;    // this game's leaderboard ticket
   let stopFacts = null;
-  let sessionMode = 'discretionary'; // 'discretionary' | 'algorithmic', chosen fresh every game
+  let sessionMode = 'discretionary'; // 'discretionary' | 'algorithmic' | 'portfolio'
+  let sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+  let sessionData = null; // future data belongs to the solo player / host only
+  let portfolioChallenge = null;
+  let portfolioClock = null;
+  let preparingSession = false;
   let algoRunner = null;             // this player's AlgoRunner while sessionMode === 'algorithmic'
   let pendingLaunch = null;          // { kind: 'solo' | 'host' | 'join', run } waiting on the mode choice
   let lastTick = null;               // latest TICK payload: what a strategy's snapshot is built from
@@ -1562,6 +1383,7 @@ function initApp() {
 
   // Settings (layout: White / Black / Navy blue) and the saved trader handle
   mountSettingsButtons();
+  mountDonations(APP_CONFIG.donations);
   mountHandleField(document.getElementById('trader-name-input'), {
     shuffleButton: document.getElementById('btn-shuffle-name'),
     clean: cleanHandle
@@ -1578,6 +1400,19 @@ function initApp() {
   const algoLabUI = new AlgoLabUI();
   const algoActionLog = new AlgoActionLogUI(eventBus, getCurrentUserId);
   const tradeHistoryUI = new TradeHistoryUI(eventBus, accountManager, getCurrentUserId);
+  const challengeSetup = new ChallengeSetup(APP_CONFIG.dataManifest);
+  const portfolioUI = new PortfolioUI({
+    onSubmit: (weights, round) => {
+      if (isAuthority()) submitPortfolioAllocation(currentUserId, weights, round);
+      else if (role === 'client') peerNetwork.broadcast({ type: 'PM_ALLOCATE', weights, round });
+    },
+    onExit: () => {
+      portfolioClock?.stop();
+      portfolioUI.stop();
+      peerNetwork.close();
+      window.location.reload();
+    }
+  });
 
   // DOM Elements
   const $ = (id) => document.getElementById(id);
@@ -1597,6 +1432,7 @@ function initApp() {
   const modeSelect = $('mode-select');
   const btnModeDiscretionary = $('mode-discretionary');
   const btnModeAlgorithmic = $('mode-algorithmic');
+  const btnModePortfolio = $('mode-portfolio');
   const btnModeBack = $('btn-mode-back');
   const indicatorPlaceholder = $('indicator-placeholder');
   const tradeHistoryPanel = $('trade-history-panel');
@@ -1622,6 +1458,7 @@ function initApp() {
   const traderCount = $('trader-count');
   eventBus.on('TICK', (data) => {
     lastTick = data;
+    if ($('market-symbol') && data.symbol) $('market-symbol').textContent = data.symbol;
     if (traderCount && typeof data.traders === 'number') traderCount.innerText = data.traders.toLocaleString('en-US');
     if (sessionProgress && typeof data.progress === 'number') {
       sessionProgress.style.width = `${Math.min(100, data.progress * 100).toFixed(1)}%`;
@@ -1670,7 +1507,10 @@ function initApp() {
   }
 
   function startRunTracking(mode) {
-    runTracker = createRunTracker({ mode, durationMin: GAME_DURATION_MINUTES });
+    // Existing global boards compare only the original 10-minute simulation.
+    runTracker = sessionMode !== 'portfolio' && sessionSettings.dataSource === 'simulated'
+      && sessionSettings.durationMinutes === GAME_DURATION_MINUTES
+      ? createRunTracker({ mode, durationMin: sessionSettings.durationMinutes }) : null;
   }
 
   // Submit this player's final PnL to the global leaderboard (once per game).
@@ -1701,19 +1541,24 @@ function initApp() {
   // what they used to do straight away. `pendingLaunch.run` is that original
   // flow; it runs once a mode (and for Algorithmic, a tested strategy) is set.
 
-  const modeLabel = (m) => (m === 'algorithmic' ? 'Algorithmic' : 'Discretionary');
+  const modeLabel = (m) => m === 'portfolio' ? 'Portfolio management' : m === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
+  const sessionLabel = () => `${modeLabel(sessionMode)} · ${sessionSettings.dataSource === 'historical' ? 'Historical' : 'Simulated'}${sessionSettings.demo ? ' · Demo' : ''} · ${sessionSettings.durationMinutes} min`;
 
   function showModeSelect(kind, run) {
     pendingLaunch = { kind, run };
+    challengeSetup.show(kind);
     if (lobbyMenu) lobbyMenu.classList.add('hidden');
     if (modeSelect) modeSelect.classList.remove('hidden');
     if (btnModeDiscretionary) btnModeDiscretionary.focus();
   }
 
   function backToLobbyMenu() {
+    peerNetwork.close();
     pendingLaunch = null;
     role = 'lobby';
     sessionMode = 'discretionary';
+    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+    sessionData = null;
     if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
     cancelPublicRollover();
     publicSlot = null;
@@ -1732,7 +1577,7 @@ function initApp() {
     const launch = pendingLaunch;
     pendingLaunch = null;
     if (modeSelect) modeSelect.classList.add('hidden');
-    if (roomModeChip) roomModeChip.textContent = modeLabel(sessionMode);
+    if (roomModeChip) roomModeChip.textContent = sessionLabel();
     if (launch) launch.run();
   }
 
@@ -1789,11 +1634,15 @@ function initApp() {
     if (tradeHistorySummary) tradeHistorySummary.classList.toggle('hidden', isAlgo);
     if (indicatorDot) indicatorDot.style.background = isAlgo ? 'var(--bid)' : 'var(--gold)';
     if (modeBadge) {
-      modeBadge.textContent = modeLabel(sessionMode);
+      modeBadge.textContent = sessionLabel();
+      modeBadge.title = sessionLabel();
       modeBadge.className = `chip ${isAlgo ? 'chip-gold' : 'chip-neutral'}`;
     }
     if (orderEntryPanel) orderEntryPanel.classList.toggle('algo-locked', isAlgo);
     if (orderEntryNote) orderEntryNote.classList.toggle('hidden', !isAlgo);
+    if ($('market-symbol')) $('market-symbol').textContent = sessionData?.symbol || 'Spot / USD';
+    if ($('session-start-label')) $('session-start-label').textContent = sessionSettings.dataSource === 'historical' ? 'Start' : '09:30 AM';
+    if ($('session-end-label')) $('session-end-label').textContent = sessionSettings.dataSource === 'historical' ? 'Finish' : '06:00 PM';
     tradeHistoryUI.reset();
     algoActionLog.reset(isAlgo);
     if (isAlgo && algoRunner) {
@@ -1870,6 +1719,8 @@ function initApp() {
         openOrders: (lastTick.playerOrders && lastTick.playerOrders[currentUserId]) || [],
         account: accountManager,
         simTimeStr: lastTick.simTimeStr,
+        dataSource: sessionSettings.dataSource,
+        symbol: lastTick.symbol || sessionData?.symbol || 'Spot / USD',
         round
       }));
     } catch (err) {
@@ -1905,12 +1756,14 @@ function initApp() {
     const mid = orderBook.getMidPrice();
     const payload = {
       midPrice: mid,
-      simTimeStr: formatSimTime(gameLoop.simulatedSeconds),
+      simTimeStr: gameLoop.currentTime(),
+      dataSource: sessionSettings.dataSource,
+      symbol: sessionData?.symbol || 'Spot / USD',
       progress: gameLoop.progress(),
       points,
       bids: orderBook.levels('BUY', BOOK_LEVELS),
       asks: orderBook.levels('SELL', BOOK_LEVELS),
-      traders: gameLoop.fleet.size + ledger.ids().filter((id) => id !== AI_ID).length,
+      traders: (gameLoop.historical ? 0 : gameLoop.fleet.size) + ledger.ids().filter((id) => id !== AI_ID).length,
       // Every trader's running PnL, best first, so the strategy panel can
       // show the room's standings live instead of only at the closing bell.
       standings: ledger.standings(mid)
@@ -1949,7 +1802,7 @@ function initApp() {
     const side = o.side === 'SELL' ? 'SELL' : 'BUY';
     const type = o.type === 'MARKET' ? 'MARKET' : 'LIMIT';
     const qty = Math.floor(Number(o.qty));
-    if (!(qty >= 1)) return notify(playerId, 'Enter a quantity of at least 1.', 'error');
+    if (!Number.isSafeInteger(qty) || qty < 1) return notify(playerId, 'Enter a finite whole-share quantity of at least 1.', 'error');
     const price = type === 'LIMIT' ? parseOptionalPrice(o.price) : 0;
     if (type === 'LIMIT' && !(price > 0)) return notify(playerId, 'Enter a limit price above $0.', 'error');
 
@@ -1981,7 +1834,7 @@ function initApp() {
     const price = parseOptionalPrice(ch.price);
     const qty = Math.floor(Number(ch.qty));
     if (!(price > 0)) return notify(playerId, 'Enter a limit price above $0.', 'error');
-    if (!(qty >= 1)) return notify(playerId, 'Enter a quantity of at least 1.', 'error');
+    if (!Number.isSafeInteger(qty) || qty < 1) return notify(playerId, 'Enter a finite whole-share quantity of at least 1.', 'error');
 
     const sl = parseOptionalPrice(ch.sl);
     const tp = parseOptionalPrice(ch.tp);
@@ -2035,6 +1888,7 @@ function initApp() {
 
   function handleAction(action, playerId) {
     if (!action || !ledger.has(playerId)) return;
+    if (sessionMode === 'portfolio') return;
     if (!marketOpen) return notify(playerId, 'The market is closed.', 'warn');
     if (sessionMode === 'algorithmic' && (action.type === 'SUBMIT_ORDER' || action.type === 'MODIFY_ORDER') && action.source !== 'algo') {
       return notify(playerId, 'Manual orders are off in algorithmic games: your strategy trades for you.', 'warn');
@@ -2077,12 +1931,79 @@ function initApp() {
 
   // ---- Game start / end ---------------------------------------------------
 
+  function launchPortfolioScreen() {
+    hideFacts();
+    lobbyPaths.stop();
+    lobbyScreen?.classList.add('hidden');
+    tradingScreen?.classList.add('hidden');
+    $('portfolio-screen')?.classList.remove('hidden');
+  }
+
+  function publishPortfolioState() {
+    if (!portfolioChallenge) return;
+    portfolioUI.show(portfolioChallenge.snapshot(currentUserId));
+    if (role === 'host') {
+      for (const [conn, id] of connToId) {
+        if (portfolioChallenge.players.has(id)) {
+          peerNetwork.send(conn, { type: 'PM_STATE', snapshot: portfolioChallenge.snapshot(id) });
+        }
+      }
+    }
+  }
+
+  function pulsePortfolioChallenge() {
+    if (!portfolioChallenge || !marketOpen || !portfolioChallenge.advance(Date.now())) return;
+    publishPortfolioState();
+    if (portfolioChallenge.finished) {
+      marketOpen = false;
+      portfolioClock?.stop();
+      portfolioClock = null;
+    }
+  }
+
+  function beginPortfolioChallenge() {
+    portfolioChallenge = new PortfolioChallenge(sessionData, {
+      durationMinutes: sessionSettings.durationMinutes, stride: sessionSettings.portfolioStride
+    });
+    const players = role === 'solo' ? [currentUserId] : connectedPlayers.map((player) => player.id);
+    for (const id of players) portfolioChallenge.register(id);
+    portfolioChallenge.start();
+    marketOpen = true;
+    runTracker = null; // portfolio scores stay in their own lobby standings
+    launchPortfolioScreen();
+    publishPortfolioState();
+    portfolioClock = new PulseClock(100, pulsePortfolioChallenge);
+    portfolioClock.start();
+  }
+
+  function submitPortfolioAllocation(playerId, weights, round) {
+    if (sessionMode !== 'portfolio' || !portfolioChallenge || !portfolioChallenge.players.has(playerId)) return;
+    // Settle any elapsed deadline before looking at a new network command.
+    pulsePortfolioChallenge();
+    try {
+      portfolioChallenge.submit(playerId, weights, round, Date.now());
+      if (playerId === currentUserId) {
+        portfolioUI.show(portfolioChallenge.snapshot(playerId));
+        portfolioUI.acknowledge(round);
+      } else {
+        for (const [conn, id] of connToId) if (id === playerId) {
+          peerNetwork.send(conn, { type: 'PM_STATE', snapshot: portfolioChallenge.snapshot(id) });
+          peerNetwork.send(conn, { type: 'PM_SAVED', round });
+          break;
+        }
+      }
+    } catch (err) { notify(playerId, err.message, 'error'); }
+  }
+
   function beginMarket() {
+    if (sessionMode === 'portfolio') return beginPortfolioChallenge();
+    gameLoop.configure({ durationMinutes: sessionSettings.durationMinutes,
+      historicalData: sessionSettings.dataSource === 'historical' ? sessionData : null });
     startRunTracking(role === 'solo' ? 'single' : 'multi');
     decision = null;
     decisionRound = 0;
     droppedPlayers.clear();
-    if (aiAgent) {
+    if (aiAgent && !gameLoop.historical) {
       gameLoop.fleet.aiAgent = aiAgent;
       ledger.register(AI_ID); // trades on the same $10,000 as everyone else
     }
@@ -2091,7 +2012,7 @@ function initApp() {
     accountManager.broadcastState();
     launchTradingScreen();
     gameLoop.start();
-    if (aiAgent) {
+    if (aiAgent && !gameLoop.historical) {
       const days = aiAgent.episodes;
       announce(days > 0
         ? `${AI_NAME} is trading today, with ${days.toLocaleString('en-US')} days of practice behind it.`
@@ -2109,11 +2030,11 @@ function initApp() {
 
     const results = {
       finalPrice,
-      closeTime: formatSimTime(SESSION_CLOSE_SECS),
+      closeTime: gameLoop.currentTime(),
       standings: ledger.standings(finalPrice).map((s) => (s.id === AI_ID ? { ...s, name: AI_NAME, isAI: true } : s))
     };
-    saveAIBrain(aiAgent); // keep today's live refinement in this browser
-    const aiTrader = gameLoop.fleet.ai;
+    if (!gameLoop.historical) saveAIBrain(aiAgent); // do not train on historical replay
+    const aiTrader = gameLoop.historical ? null : gameLoop.fleet.ai;
     if (aiTrader) {
       const humans = ledger.ids().filter((id) => id !== AI_ID).length;
       uploadExperience(aiTrader.experience(), { humans }); // for the nightly long-term learning
@@ -2142,7 +2063,7 @@ function initApp() {
 
   function onHostMessage(data, conn) {
     if (data.type === 'JOIN_LOBBY') {
-      if (marketOpen || gameLoop.finished) {
+      if (marketOpen || gameLoop.finished || portfolioChallenge?.started) {
         peerNetwork.send(conn, { type: 'JOIN_REJECTED', token: data.token, reason: 'This game has already started.' });
         return;
       }
@@ -2172,18 +2093,28 @@ function initApp() {
         ledger.register(id);                          // (their account was dropped with them)
       }
       if (conn) connToId.set(conn, id);
-      peerNetwork.send(conn, { type: 'WELCOME', token: data.token, playerId: id });
+      peerNetwork.send(conn, { type: 'WELCOME', token: data.token, playerId: id,
+        mode: sessionMode, settings: publicSettings(sessionSettings) });
       peerNetwork.broadcast({ type: 'LOBBY_UPDATE', players: connectedPlayers, public: publicSlot != null });
       renderPlayerList();
       publicCountdown?.update(connectedPlayers.length);
+    } else if (data.type === 'PM_ALLOCATE') {
+      const id = connToId.get(conn);
+      if (id) submitPortfolioAllocation(id, data.weights, data.round);
     } else if (HUMAN_ACTIONS.has(data.type)) {
-      handleAction(data, data.playerId);
+      const id = connToId.get(conn);
+      if (!id || sessionMode === 'portfolio') return;
+      handleAction(data, id);
       if (marketOpen) publishState();
     } else if (data.type === 'ALGO_LOG' && data.entry) {
-      eventBus.emit('ALGO_LOG', data.entry);
-      peerNetwork.broadcast({ type: 'ALGO_LOG', entry: data.entry });
+      const id = connToId.get(conn);
+      if (!id || sessionMode !== 'algorithmic') return;
+      const entry = { ...data.entry, playerId: id, name: id };
+      eventBus.emit('ALGO_LOG', entry);
+      peerNetwork.broadcast({ type: 'ALGO_LOG', entry });
     } else if (data.type === 'ALGO_DONE') {
-      const id = connToId.get(conn) || data.playerId;
+      const id = connToId.get(conn);
+      if (!id) return;
       if (droppedPlayers.has(id) && connToId.has(conn)) droppedPlayers.delete(id); // a late answer: they're back
       finishDecision(id, data.round);
     }
@@ -2193,6 +2124,9 @@ function initApp() {
   eventBus.on('NET_HOST_LOST', () => {
     if (role !== 'client') return;
     if (marketOpen) {
+      marketOpen = false;
+      eventBus.emit('MARKET_STATE', { open: false });
+      if (sessionMode === 'portfolio') portfolioUI.disconnect();
       toast('The host left, so the game has ended.', 'error');
       return;
     }
@@ -2229,6 +2163,12 @@ function initApp() {
         if (data.token !== joinToken) break;
         if (data.playerId !== currentUserId) toast(`That name was taken, so you're trading as ${data.playerId}.`, 'info');
         currentUserId = data.playerId;
+        if (data.settings) sessionSettings = publicSettings(data.settings);
+        if (['discretionary', 'algorithmic', 'portfolio'].includes(data.mode)) sessionMode = data.mode;
+        if (roomModeChip) roomModeChip.textContent = sessionLabel();
+        if (waitingHint && publicSlot == null) waitingHint.textContent = sessionSettings.datasetLabel
+          ? `${sessionSettings.datasetLabel} · ${sessionSettings.durationMinutes} minute session. The host chooses the data.`
+          : `Simulated order book · ${sessionSettings.durationMinutes} minute session.`;
         accountManager.setPlayerId(currentUserId);
         renderPlayerList();
         break;
@@ -2246,12 +2186,23 @@ function initApp() {
         break;
       case 'START_GAME':
         cancelPublicRollover();
+        if (data.settings) sessionSettings = publicSettings(data.settings);
+        if (['discretionary', 'algorithmic', 'portfolio'].includes(data.mode)) sessionMode = data.mode;
         startRunTracking('multi');
         clientHistory = [];
         marketOpen = true;
         eventBus.emit('MARKET_STATE', { open: true });
         accountManager.broadcastState();
-        launchTradingScreen();
+        if (sessionMode === 'portfolio') launchPortfolioScreen();
+        else launchTradingScreen();
+        break;
+      case 'PM_STATE':
+        if (sessionMode !== 'portfolio' || !data.snapshot) break;
+        portfolioUI.show(data.snapshot);
+        if (data.snapshot.finished) marketOpen = false;
+        break;
+      case 'PM_SAVED':
+        if (sessionMode === 'portfolio') portfolioUI.acknowledge(data.round);
         break;
       case 'SYNC_PRIVATE':
         // Just our own working orders and bracket levels; held until the next
@@ -2438,6 +2389,8 @@ function initApp() {
     role = 'lobby';
     resetRoomState();
     sessionMode = 'discretionary';
+    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+    sessionData = null;
     disposeAlgoRunner();
     currentUserId = getTraderName();
     // The host connection can open (and JOIN_LOBBY go out) before the await
@@ -2500,21 +2453,28 @@ function initApp() {
     currentUserId = getTraderName();
     ledger.register(currentUserId);
     accountManager.setPlayerId(currentUserId);
-    aiReady.then(beginMarket);
+    if (sessionMode === 'portfolio' || sessionSettings.dataSource === 'historical') beginMarket();
+    else aiReady.then(beginMarket);
   }
 
-  function startHosting() {
+  async function startHosting() {
     role = 'host';
     currentUserId = getTraderName();
     ledger.register(currentUserId);
     accountManager.setPlayerId(currentUserId);
 
     const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
-    peerNetwork.initHost(roomCode);
+    const hosted = await peerNetwork.initHost(roomCode);
+    if (!hosted) {
+      toast('Could not create this room. Please try hosting again.', 'error');
+      backToLobbyMenu();
+      return;
+    }
 
     if (displayRoomCode) displayRoomCode.innerText = roomCode;
     if (roomCodeDisplay) roomCodeDisplay.innerText = roomCode;
     if (roomBadge) roomBadge.classList.remove('hidden');
+    if (waitingHint) waitingHint.textContent = `${sessionLabel()}${sessionSettings.datasetLabel ? ` · ${sessionSettings.datasetLabel}` : ''}. Share the code to invite players.`;
 
     connectedPlayers = [{ id: currentUserId, isHost: true }];
     renderPlayerList();
@@ -2526,13 +2486,18 @@ function initApp() {
     showFacts();
   }
 
-  function startJoining(code) {
+  async function startJoining(code) {
     role = 'client';
     currentUserId = getTraderName();
     joinToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
     accountManager.setPlayerId(currentUserId);
 
-    peerNetwork.initClient(code, currentUserId);
+    const joined = await peerNetwork.initClient(code, currentUserId);
+    if (!joined) {
+      toast('Could not join that room. Check the code and try again.', 'error');
+      backToLobbyMenu();
+      return;
+    }
 
     if (displayRoomCode) displayRoomCode.innerText = code;
     if (roomCodeDisplay) roomCodeDisplay.innerText = code;
@@ -2566,7 +2531,7 @@ function initApp() {
     btnJoinMultiplayer.addEventListener('click', () => {
       if (role !== 'lobby') return;
       const code = roomCodeInput ? roomCodeInput.value.trim() : '';
-      if (!code) {
+      if (!/^\d{6}$/.test(code)) {
         toast('Enter the 6-digit room code from your host.', 'error');
         return;
       }
@@ -2576,22 +2541,30 @@ function initApp() {
 
   // ---- Mode choice & Algo Lab ------------------------------------------------
 
-  if (btnModeDiscretionary) {
-    btnModeDiscretionary.addEventListener('click', () => {
-      if (!pendingLaunch) return;
-      sessionMode = 'discretionary';
-      disposeAlgoRunner();
-      runPendingLaunch();
-    });
+  async function chooseSessionMode(mode) {
+    if (!pendingLaunch || preparingSession) return;
+    preparingSession = true;
+    const launch = pendingLaunch;
+    const buttons = [btnModeDiscretionary, btnModeAlgorithmic, btnModePortfolio, btnModeBack].filter(Boolean);
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const prepared = await challengeSetup.prepare(mode);
+      if (pendingLaunch !== launch) return;
+      sessionSettings = prepared.settings;
+      sessionData = prepared.data;
+      sessionMode = mode;
+      if (mode === 'algorithmic') openAlgoLab();
+      else { disposeAlgoRunner(); runPendingLaunch(); }
+    } catch (err) { toast(err.message, 'error'); }
+    finally {
+      preparingSession = false;
+      buttons.forEach((button) => { button.disabled = false; });
+    }
   }
 
-  if (btnModeAlgorithmic) {
-    btnModeAlgorithmic.addEventListener('click', () => {
-      if (!pendingLaunch) return;
-      sessionMode = 'algorithmic';
-      openAlgoLab();
-    });
-  }
+  btnModeDiscretionary?.addEventListener('click', () => chooseSessionMode('discretionary'));
+  btnModeAlgorithmic?.addEventListener('click', () => chooseSessionMode('algorithmic'));
+  btnModePortfolio?.addEventListener('click', () => chooseSessionMode('portfolio'));
 
   if (btnModeBack) btnModeBack.addEventListener('click', () => backToLobbyMenu());
 
@@ -2641,10 +2614,12 @@ function initApp() {
     btnStartGame.addEventListener('click', () => {
       if (role !== 'host' || marketOpen || gameLoop.finished) return;
       btnStartGame.disabled = true;
-      aiReady.then(() => {
-        peerNetwork.broadcast({ type: 'START_GAME' });
+      const start = () => {
+        peerNetwork.broadcast({ type: 'START_GAME', mode: sessionMode, settings: publicSettings(sessionSettings) });
         beginMarket();
-      });
+      };
+      if (sessionMode === 'portfolio' || sessionSettings.dataSource === 'historical') start();
+      else aiReady.then(start);
     });
   }
 }
