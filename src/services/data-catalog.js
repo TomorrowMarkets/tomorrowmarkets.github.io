@@ -40,7 +40,13 @@ export async function loadCatalog(manifestPath, baseURL = document.baseURI, opti
 // dataset, its future price rows, or the authority's pending allocation map.
 export function publicSettings(settings) {
   return {
-    version: 2,
+    version: 3,
+    sessionDays: settings.sessionDays === 1 ? 1 : 5,
+    barMinutes: [0.25,5,10,15].includes(settings.barMinutes) ? settings.barMinutes : 5,
+    fastBacktest: settings.fastBacktest === true,
+    arenaLearning: settings.arenaLearning === true,
+    windowStart: String(settings.windowStart || '').slice(0,10),
+    windowEnd: String(settings.windowEnd || '').slice(0,10),
     dataSource: settings.dataSource === 'historical' ? 'historical' : 'simulated',
     durationMinutes: [10, 15, 20].includes(settings.durationMinutes) ? settings.durationMinutes : 10,
     portfolioStride: settings.portfolioStride === 1 ? 1 : 5,

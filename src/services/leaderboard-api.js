@@ -15,7 +15,7 @@ export const isConfigured = !SUPABASE_URL.includes('YOUR-PROJECT-REF');
 
 let clientPromise = null;
 
-function getClient() {
+export function getClient() {
   if (!isConfigured) return Promise.resolve(null);
   clientPromise ??= import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
     .then(({ createClient }) => createClient(SUPABASE_URL, SUPABASE_KEY));
@@ -25,7 +25,7 @@ function getClient() {
 // Every browser gets a silent anonymous account the first time it plays.
 // The session persists in the browser, so a player keeps one leaderboard
 // entry per category and their row is marked "(You)".
-async function ensureSession(sb) {
+export async function ensureSession(sb) {
   const { data } = await sb.auth.getSession();
   if (data.session) return;
   const { error } = await sb.auth.signInAnonymously();
@@ -127,3 +127,4 @@ function sampleRows(category) {
     return row;
   });
 }
+
