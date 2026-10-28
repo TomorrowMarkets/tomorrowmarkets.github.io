@@ -56,3 +56,4 @@ if (!brain) {
 }
 const played = practise(brain, { days: opt('--days', Infinity), minutes: opt('--minutes', args.includes('--days') ? Infinity : 30), save: saveBrain });
 console.log(`Practised ${played} days. Saved to assets/ai-brain.json (${brain.episodes} days in total).`);
+

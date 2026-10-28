@@ -1,0 +1,2 @@
+yfinance
+exchange_calendars>=4,<5

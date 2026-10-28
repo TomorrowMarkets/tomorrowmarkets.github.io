@@ -129,3 +129,4 @@ for (const [type, t] of Object.entries(byType).sort((a, b) => b[1].volume - a[1]
   console.log(`  ${type.padEnd(16)}${Math.round(t.volume / DAYS).toLocaleString('en-US').padStart(12)} ${pct(t.volume / total).padStart(7)} ${`$${Math.round(t.pnl / DAYS).toLocaleString('en-US')}`.padStart(11)}`);
 }
 console.log('');
+

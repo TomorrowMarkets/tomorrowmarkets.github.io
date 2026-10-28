@@ -30,6 +30,20 @@ def generate(root=Path('.')):
         frames.append({'timestamp': (current + timedelta(seconds=i * 127.5)).isoformat().replace('+00:00', 'Z'),
             'bids': [{'price': round(mid - 0.02 - j * 0.02, 2), 'qty': rng.randint(80, 350)} for j in range(5)],
             'asks': [{'price': round(mid + 0.02 + j * 0.02, 2), 'qty': rng.randint(80, 350)} for j in range(5)]})
+    original = frames
+    frames = []
+    session_date = current.date()
+    for day in range(5):
+        while session_date.weekday() >= 5:
+            session_date += timedelta(days=1)
+        factor = math.exp(rng.gauss(0, 0.008))
+        for frame in original:
+            timestamp = datetime.fromisoformat(frame['timestamp'].replace('Z', '+00:00'))
+            shifted = timestamp.replace(year=session_date.year, month=session_date.month, day=session_date.day)
+            frames.append({'timestamp': shifted.isoformat().replace('+00:00', 'Z'),
+                'volume': rng.randint(400, 15000),
+                **{side: [{'price': round(level['price'] * factor, 2), 'qty': level['qty']} for level in frame[side]] for side in ['bids', 'asks']}})
+        session_date += timedelta(days=1)
     orderbook = {'version': 1, 'kind': 'orderbook', 'symbol': 'DEMO / USD', 'currency': 'USD', 'demo': True, 'frames': frames}
     for name, data in [('data/portfolio/demo-30.json', portfolio), ('data/orderbooks/demo-book.json', orderbook)]:
         path = root / name
