@@ -3,7 +3,7 @@
   "orderbooks": [
     {
       "id": "demo-orderbook",
-      "label": "Example orderbook replay · synthetic",
+      "label": "Five-session orderbook replay \u00b7 synthetic",
       "path": "orderbooks/demo-book.json",
       "demo": true
     }
@@ -11,7 +11,7 @@
   "portfolios": [
     {
       "id": "demo-portfolio",
-      "label": "Example portfolio challenge · synthetic",
+      "label": "Example portfolio challenge \u00b7 synthetic",
       "path": "portfolio/demo-30.json",
       "demo": true
     }
