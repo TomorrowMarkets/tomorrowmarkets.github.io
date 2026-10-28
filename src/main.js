@@ -3,7 +3,7 @@ import { OrderBook } from './engine/OrderBook.js';
 import { GameLoop, PulseClock } from './engine/GameLoop.js';
 import { PriceChart } from './ui/PriceChart.js';
 import { mountLobbyFacts } from './ui/lobby-facts.js';
-import { createRunTracker, isConfigured as leaderboardLive } from './services/leaderboard-api.js';
+import { createBoardRun, boardURL, recordDeviceResult } from './services/boards.js';
 import { findPublicRoom, PublicCountdown, MAX_PUBLIC_PLAYERS, MIN_PUBLIC_PLAYERS, describeSlot } from './services/public-lobby.js';
 import { BranchingDQN } from './engine/ai/brain.js';
 import { createAgent, AI_ID, AI_NAME } from './engine/ai/RLTrader.js';
@@ -20,6 +20,8 @@ import { ChallengeSetup } from './ui/ChallengeSetup.js';
 import { PortfolioUI } from './ui/PortfolioUI.js';
 import { PortfolioChallenge } from './engine/PortfolioChallenge.js';
 import { publicSettings } from './services/data-catalog.js';
+import { sessionPlan } from './engine/session.js';
+import { ArenaUI } from './ui/ArenaUI.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -1033,17 +1035,14 @@ class GameOverUI {
 
   // Global leaderboard result: pending -> placed / not placed. Stays hidden
   // if the leaderboard isn't set up or couldn't be reached.
-  showLeaderboard(state, category, rank = null) {
-    const el = this.leaderboard;
-    if (!el) return;
-    const board = category === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
-    const link = `<a class="footer-link" href="leaderboard.html#${category}">See the leaderboard</a>`;
-    if (state === 'pending') el.textContent = 'Saving your score to the leaderboard…';
-    else if (state === 'placed') el.innerHTML = `You placed ${ordinal(rank)} on the ${board} leaderboard. ${link}`;
-    else if (state === 'missed') el.innerHTML = `This score didn't make the ${board} top 1,000. ${link}`;
-    el.classList.toggle('hidden', state === 'hidden');
-  }
-}
+  showLeaderboard(state, dimensions, rank = null, scope = 'shared') {
+    const el=this.leaderboard;if(!el)return;
+    if(state==='hidden'){el.classList.add('hidden');return;}
+    el.classList.remove('hidden');
+    if(state==='pending'){el.textContent='Saving your result…';return;}
+    const text=document.createElement('span');text.textContent=`Placed ${rank || '—'} on ${scope==='device'?'this device’s':'the community'} board. `;
+    const link=document.createElement('a');link.className='footer-link';link.href=boardURL(dimensions)+(scope==='device'?'&scope=device':'');link.textContent='View results';el.replaceChildren(text,link);
+  }}
 
 // ===================================================================
 // LOBBY BACKGROUND: a live Monte Carlo simulation. A fan of simulated
@@ -1328,11 +1327,14 @@ function initApp() {
   let runTracker = null;    // this game's leaderboard ticket
   let stopFacts = null;
   let sessionMode = 'discretionary'; // 'discretionary' | 'algorithmic' | 'portfolio'
-  let sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+  let sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES, sessionDays: 1, barMinutes: 0.25 });
   let sessionData = null; // future data belongs to the solo player / host only
   let portfolioChallenge = null;
   let portfolioClock = null;
   let preparingSession = false;
+  let runCurve = [];
+  let runTrades = [];
+  let completedResults = null;
   let algoRunner = null;             // this player's AlgoRunner while sessionMode === 'algorithmic'
   let pendingLaunch = null;          // { kind: 'solo' | 'host' | 'join', run } waiting on the mode choice
   let lastTick = null;               // latest TICK payload: what a strategy's snapshot is built from
@@ -1374,7 +1376,7 @@ function initApp() {
     onPulse: (points) => publishState(points),
     onFinish: () => closeMarket(),
     onNews: (text) => announce(text),
-    shouldPause: (tick) => sessionMode === 'algorithmic' && tick % ALGO_DECISION_EVERY_TICKS === 0,
+    shouldPause: (tick) => sessionMode === 'algorithmic' && tick % (sessionSettings.barMinutes >= 5 ? 1 : ALGO_DECISION_EVERY_TICKS) === 0,
     onPaused: () => startDecisionRound()
   });
 
@@ -1397,6 +1399,7 @@ function initApp() {
   });
   new ControlsUI(eventBus, accountManager, getCurrentUserId, toast);
   const gameOverUI = new GameOverUI();
+  const arenaUI = new ArenaUI(eventBus);
   const algoLabUI = new AlgoLabUI();
   const algoActionLog = new AlgoActionLogUI(eventBus, getCurrentUserId);
   const tradeHistoryUI = new TradeHistoryUI(eventBus, accountManager, getCurrentUserId);
@@ -1458,6 +1461,12 @@ function initApp() {
   const traderCount = $('trader-count');
   eventBus.on('TICK', (data) => {
     lastTick = data;
+    if (Number.isFinite(data.midPrice) && sessionMode !== 'portfolio') {
+      const equity = STARTING_CASH + accountManager.totalPnL(data.midPrice);
+      const point = { time: data.simTimeStr, price: data.midPrice, equity, cash: accountManager.cash, shares: accountManager.shares };
+      if (!runCurve.length || runCurve.at(-1).time !== point.time) runCurve.push(point);
+      else runCurve[runCurve.length - 1] = point;
+    }
     if ($('market-symbol') && data.symbol) $('market-symbol').textContent = data.symbol;
     if (traderCount && typeof data.traders === 'number') traderCount.innerText = data.traders.toLocaleString('en-US');
     if (sessionProgress && typeof data.progress === 'number') {
@@ -1506,26 +1515,29 @@ function initApp() {
     stopFacts = null;
   }
 
-  function startRunTracking(mode) {
-    // Existing global boards compare only the original 10-minute simulation.
-    runTracker = sessionMode !== 'portfolio' && sessionSettings.dataSource === 'simulated'
-      && sessionSettings.durationMinutes === GAME_DURATION_MINUTES
-      ? createRunTracker({ mode, durationMin: sessionSettings.durationMinutes }) : null;
+  function scoreDimensions(playMode = role === 'solo' ? 'single' : 'multi') {
+    return {
+      challenge: sessionMode === 'portfolio' ? 'portfolio' : sessionMode === 'arena' ? 'arena' : sessionSettings.fastBacktest ? 'backtest' : 'trading',
+      strategy: sessionMode === 'portfolio' ? 'discretionary' : sessionMode === 'arena' ? 'rl' : sessionMode === 'algorithmic' ? algoRunner?.language === 'simple' ? 'simple' : 'algorithmic' : 'discretionary',
+      source: sessionSettings.dataSource,sessionDays:sessionSettings.sessionDays,barMinutes:sessionSettings.barMinutes,
+      durationMinutes:sessionSettings.durationMinutes,playMode,roundDays:sessionSettings.portfolioStride,
+      datasetId:sessionSettings.datasetId || 'simulation-v2'
+    };
   }
-
-  // Submit this player's final PnL to the global leaderboard (once per game).
+  function startRunTracking(mode) { runTracker = sessionMode === 'arena' ? null : createBoardRun(scoreDimensions(mode === 'multi' ? 'multi' : 'single')); }
   function submitRun(results) {
-    const tracker = runTracker;
-    runTracker = null;
-    if (!tracker) return;
-    const category = sessionMode; // the two leaderboards are kept apart by the mode chosen before the game
-    const mine = myStanding(results, currentUserId, accountManager);
-    if (leaderboardLive) gameOverUI.showLeaderboard('pending', category);
-    tracker.finish({ handle: currentUserId, category, pnl: mine.total }).then((res) => {
-      if (!res) gameOverUI.showLeaderboard('hidden', category);
-      else if (res.rank) gameOverUI.showLeaderboard('placed', category, res.rank);
-      else gameOverUI.showLeaderboard('missed', category);
-    });
+    const tracker=runTracker;runTracker=null;if(!tracker || results.partial)return;
+    const mine=myStanding(results,currentUserId,accountManager);
+    let peak=STARTING_CASH,maxDrawdown=0;
+    for(const point of runCurve){peak=Math.max(peak,point.equity);maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak*100);}
+    gameOverUI.showLeaderboard('pending', tracker.dimensions);
+    tracker.finish({handle:currentUserId,pnl:mine.total,returnPct:mine.total/STARTING_CASH*100,maxDrawdown,
+      metadata:{windowStart:sessionSettings.windowStart,windowEnd:sessionSettings.windowEnd,demo:sessionSettings.demo,trades:runTrades.length}})
+      .then(result=>gameOverUI.showLeaderboard(result?'placed':'hidden',tracker.dimensions,result?.rank,result?.scope));
+  }
+  function chartConfig() {
+    const plan=sessionPlan(sessionSettings);
+    eventBus.emit('SESSION_CONFIG',{originSecs:SESSION_OPEN_SECS,secsPerTick:plan.barSeconds,totalTicks:plan.totalTicks,sessionDays:plan.sessionDays});
   }
 
   function launchTradingScreen() {
@@ -1541,8 +1553,8 @@ function initApp() {
   // what they used to do straight away. `pendingLaunch.run` is that original
   // flow; it runs once a mode (and for Algorithmic, a tested strategy) is set.
 
-  const modeLabel = (m) => m === 'portfolio' ? 'Portfolio management' : m === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
-  const sessionLabel = () => `${modeLabel(sessionMode)} · ${sessionSettings.dataSource === 'historical' ? 'Historical' : 'Simulated'}${sessionSettings.demo ? ' · Demo' : ''} · ${sessionSettings.durationMinutes} min`;
+  const modeLabel = (m) => m === 'arena' ? 'RL arena' : m === 'portfolio' ? 'Portfolio management' : m === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
+  const sessionLabel = () => `${modeLabel(sessionMode)} · ${sessionSettings.dataSource === 'historical' ? 'Historical' : 'Simulated'}${sessionSettings.demo ? ' · Demo' : ''} · ${sessionSettings.fastBacktest ? 'Fast backtest' : sessionSettings.durationMinutes+' min'}${sessionMode==='portfolio'?'':` · ${sessionSettings.sessionDays} day${sessionSettings.sessionDays>1?'s':''}`}`;
 
   function showModeSelect(kind, run) {
     pendingLaunch = { kind, run };
@@ -1557,7 +1569,7 @@ function initApp() {
     pendingLaunch = null;
     role = 'lobby';
     sessionMode = 'discretionary';
-    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES, sessionDays: 1, barMinutes: 0.25 });
     sessionData = null;
     if (publicCountdown) { publicCountdown.stop(); publicCountdown = null; }
     cancelPublicRollover();
@@ -1622,13 +1634,18 @@ function initApp() {
   // Swaps the bottom panel (and the order ticket) to match this session:
   // your own fills for discretionary, the strategy log for algorithmic.
   function applySessionMode() {
-    const isAlgo = sessionMode === 'algorithmic';
+    const isArena = sessionMode === 'arena';
+    const isAlgo = sessionMode === 'algorithmic' || isArena;
+    tradingScreen?.classList.toggle('is-algorithmic', isAlgo);
+    $('positions-panel')?.classList.toggle('hidden', isArena);
+    if (isArena) arenaUI.show(sessionSettings.arenaLearning);
+    $('backtest-controls').hidden = !sessionSettings.fastBacktest;
     if (indicatorPlaceholder) indicatorPlaceholder.classList.add('hidden');
     if (tradeHistoryPanel) tradeHistoryPanel.classList.toggle('hidden', isAlgo);
     if (algoLogPanel) algoLogPanel.classList.toggle('hidden', !isAlgo);
     if (indicatorTitle) indicatorTitle.textContent = isAlgo ? 'Algorithmic strategy engine' : 'Trade history';
     if (indicatorMeta) {
-      indicatorMeta.textContent = `Decision round every ${ALGO_DECISION_EVERY_TICKS * SIM_SECS_PER_TICK / 60} sim-min`;
+      indicatorMeta.textContent = `Decision every ${sessionSettings.barMinutes >= 5 ? sessionSettings.barMinutes : 5} sim-min · ${sessionSettings.sessionDays} trading day(s)`;
       indicatorMeta.classList.toggle('hidden', !isAlgo);
     }
     if (tradeHistorySummary) tradeHistorySummary.classList.toggle('hidden', isAlgo);
@@ -1640,6 +1657,11 @@ function initApp() {
     }
     if (orderEntryPanel) orderEntryPanel.classList.toggle('algo-locked', isAlgo);
     if (orderEntryNote) orderEntryNote.classList.toggle('hidden', !isAlgo);
+    if (algoRunner) algoRunner.budgetMs = sessionSettings.fastBacktest ? 60000 : sessionSettings.barMinutes >= 5 ? Math.max(500,Math.min(60000,Math.floor(sessionPlan(sessionSettings).tickIntervalMs*0.7))) : 60000;
+    if (isArena) {
+      if (indicatorTitle) indicatorTitle.textContent = 'RL arena — spectator activity';
+      if (indicatorMeta) indicatorMeta.textContent = 'RL decisions every simulated minute';
+    }
     if ($('market-symbol')) $('market-symbol').textContent = sessionData?.symbol || 'Spot / USD';
     if ($('session-start-label')) $('session-start-label').textContent = sessionSettings.dataSource === 'historical' ? 'Start' : '09:30 AM';
     if ($('session-end-label')) $('session-end-label').textContent = sessionSettings.dataSource === 'historical' ? 'Finish' : '06:00 PM';
@@ -1670,13 +1692,14 @@ function initApp() {
   function startDecisionRound() {
     decisionRound += 1;
     const round = decisionRound;
+    const timeoutMs = sessionSettings.barMinutes >= 5 ? Math.min(ALGO_DECISION_TIMEOUT_MS, Math.max(5000, sessionPlan(sessionSettings).tickIntervalMs + 2500)) : ALGO_DECISION_TIMEOUT_MS;
     const waiting = new Set(ledger.ids().filter((id) => id !== AI_ID && !droppedPlayers.has(id)));
     if (waiting.size === 0) {
       gameLoop.resume();
       return;
     }
     const total = waiting.size;
-    decision = { round, waiting, total, timer: setTimeout(() => endDecisionRound(round, true), ALGO_DECISION_TIMEOUT_MS) };
+    decision = { round, waiting, total, timeoutMs, timer: setTimeout(() => endDecisionRound(round, true), timeoutMs) };
     emitRound({ round, phase: 'waiting', pending: total, total });
     if (role === 'host') peerNetwork.broadcast({ type: 'ALGO_DECISION', round });
     if (waiting.has(currentUserId)) runLocalDecision(round).then(() => finishDecision(currentUserId, round));
@@ -1692,13 +1715,14 @@ function initApp() {
     if (!decision || decision.round !== round) return;
     clearTimeout(decision.timer);
     const late = [...decision.waiting];
+    const timeoutSeconds = Math.round((decision.timeoutMs || ALGO_DECISION_TIMEOUT_MS) / 1000);
     decision = null;
     if (timedOut && late.length) {
       // Don't make everyone wait a full minute every round for a player who
       // may have gone. They're back in from the next round as soon as they
       // answer (see onHostMessage ALGO_DONE).
       for (const id of late) droppedPlayers.add(id);
-      announce(`Round ${round}: carried on without ${late.join(', ')} after ${ALGO_DECISION_TIMEOUT_MS / 1000}s. They'll rejoin the rounds once they respond.`);
+      announce(`Round ${round}: carried on without ${late.join(', ')} after ${timeoutSeconds}s. They'll rejoin the rounds once they respond.`);
     }
     if (!marketOpen) return;
     publishState();
@@ -1763,11 +1787,11 @@ function initApp() {
       points,
       bids: orderBook.levels('BUY', BOOK_LEVELS),
       asks: orderBook.levels('SELL', BOOK_LEVELS),
-      traders: (gameLoop.historical ? 0 : gameLoop.fleet.size) + ledger.ids().filter((id) => id !== AI_ID).length,
+      traders: (gameLoop.historical ? 0 : gameLoop.fleet.size) + ledger.ids().filter((id) => id !== AI_ID && !id.startsWith('bot:arena:')).length,
       // Every trader's running PnL, best first, so the strategy panel can
       // show the room's standings live instead of only at the closing bell.
       standings: ledger.standings(mid)
-        .map((st) => (st.id === AI_ID ? { ...st, name: AI_NAME, isAI: true } : st))
+        .map(presentStanding)
     };
 
     const allOrders = collectHumanOrders();
@@ -1888,7 +1912,7 @@ function initApp() {
 
   function handleAction(action, playerId) {
     if (!action || !ledger.has(playerId)) return;
-    if (sessionMode === 'portfolio') return;
+    if (sessionMode === 'portfolio' || sessionMode === 'arena') return;
     if (!marketOpen) return notify(playerId, 'The market is closed.', 'warn');
     if (sessionMode === 'algorithmic' && (action.type === 'SUBMIT_ORDER' || action.type === 'MODIFY_ORDER') && action.source !== 'algo') {
       return notify(playerId, 'Manual orders are off in algorithmic games: your strategy trades for you.', 'warn');
@@ -1958,6 +1982,7 @@ function initApp() {
       marketOpen = false;
       portfolioClock?.stop();
       portfolioClock = null;
+      finishPortfolioScore();
     }
   }
 
@@ -1969,7 +1994,7 @@ function initApp() {
     for (const id of players) portfolioChallenge.register(id);
     portfolioChallenge.start();
     marketOpen = true;
-    runTracker = null; // portfolio scores stay in their own lobby standings
+    startRunTracking(role === 'solo' ? 'single' : 'multi');
     launchPortfolioScreen();
     publishPortfolioState();
     portfolioClock = new PulseClock(100, pulsePortfolioChallenge);
@@ -1995,15 +2020,34 @@ function initApp() {
     } catch (err) { notify(playerId, err.message, 'error'); }
   }
 
+  function presentStanding(standing) {
+    return standing.id === AI_ID ? {...standing,name:AI_NAME,isAI:true} : standing.id.startsWith('bot:arena:')
+      ? {...standing,name:standing.id.endsWith(':A')?'DQN A':'DQN B',isAI:true} : standing;
+  }
+  function finishPortfolioScore(snapshot = portfolioChallenge?.snapshot(currentUserId)) {
+    const tracker=runTracker;runTracker=null;if(!tracker || !snapshot)return;
+    tracker.finish({handle:currentUserId,pnl:snapshot.account.capital-STARTING_CASH,returnPct:(snapshot.account.capital/STARTING_CASH-1)*100,
+      maxDrawdown:snapshot.account.maxDrawdown,metadata:{windowStart:snapshot.startDate,windowEnd:snapshot.endDate,benchmark:snapshot.benchmark,demo:sessionSettings.demo}});
+  }
+  function arenaAgents() {
+    return ['A','B'].map(letter=>({id:`bot:arena:${letter}`,agent:aiAgent?BranchingDQN.fromJSON(aiAgent.toJSON(),AI_LIVE_SETTINGS):createAgent(AI_LIVE_SETTINGS),learning:sessionSettings.arenaLearning}));
+  }
   function beginMarket() {
     if (sessionMode === 'portfolio') return beginPortfolioChallenge();
-    gameLoop.configure({ durationMinutes: sessionSettings.durationMinutes,
-      historicalData: sessionSettings.dataSource === 'historical' ? sessionData : null });
+    const arena = sessionMode === 'arena' ? { agents: arenaAgents() } : null;
+    if (arena) {
+      ledger.unregister(currentUserId);
+      for (const entry of arena.agents) ledger.register(entry.id);
+      gameLoop.fleet.aiAgent = null;
+    }
+    gameLoop.configure({ ...sessionSettings, historicalData: sessionSettings.dataSource === 'historical' ? sessionData : null, arena });
+    chartConfig();runCurve=[];runTrades=[];completedResults=null;
+    if (algoRunner) algoRunner.budgetMs = sessionSettings.fastBacktest ? 60000 : sessionSettings.barMinutes >= 5 ? Math.max(500,Math.min(60000,Math.floor(gameLoop.tickIntervalMs*0.7))) : 60000;
     startRunTracking(role === 'solo' ? 'single' : 'multi');
     decision = null;
     decisionRound = 0;
     droppedPlayers.clear();
-    if (aiAgent && !gameLoop.historical) {
+    if (aiAgent && !gameLoop.historical && sessionMode !== 'arena') {
       gameLoop.fleet.aiAgent = aiAgent;
       ledger.register(AI_ID); // trades on the same $10,000 as everyone else
     }
@@ -2011,16 +2055,25 @@ function initApp() {
     eventBus.emit('MARKET_STATE', { open: true });
     accountManager.broadcastState();
     launchTradingScreen();
-    gameLoop.start();
-    if (aiAgent && !gameLoop.historical) {
+    if (sessionSettings.fastBacktest) {
+      gameLoop.runFast({onDecision:async round=>{
+        eventBus.emit('ALGO_ROUND',{round:round+1,phase:'waiting',pending:1,total:1});
+        await runLocalDecision(round);
+        eventBus.emit('ALGO_ROUND',{round:round+1,phase:'live'});
+      }}).catch(error=>{toast(error.message,'error');runTracker=null;gameLoop.stop();closeMarket(true);});
+    } else {
+      gameLoop.start();
+      if(sessionMode==='algorithmic'){gameLoop.pause();startDecisionRound();}
+    }
+    if (aiAgent && !gameLoop.historical && sessionMode !== 'arena') {
       const days = aiAgent.episodes;
       announce(days > 0
-        ? `${AI_NAME} is trading today, with ${days.toLocaleString('en-US')} days of practice behind it.`
+        ? `${AI_NAME} is trading today, with ${days.toLocaleString('en-US')} completed sessions of practice behind it.`
         : `${AI_NAME} is trading today for the very first time. Expect chaos.`);
     }
   }
 
-  function closeMarket() {
+  function closeMarket(partial = false) {
     if (!marketOpen) return;
     marketOpen = false;
     const finalPrice = orderBook.getMidPrice();
@@ -2029,9 +2082,10 @@ function initApp() {
     publishState([]);
 
     const results = {
+      partial,
       finalPrice,
       closeTime: gameLoop.currentTime(),
-      standings: ledger.standings(finalPrice).map((s) => (s.id === AI_ID ? { ...s, name: AI_NAME, isAI: true } : s))
+      standings: ledger.standings(finalPrice).map(presentStanding)
     };
     if (!gameLoop.historical) saveAIBrain(aiAgent); // do not train on historical replay
     const aiTrader = gameLoop.historical ? null : gameLoop.fleet.ai;
@@ -2050,7 +2104,14 @@ function initApp() {
       clearTimeout(decision.timer);
       decision = null;
     }
+    completedResults = results;
+    if (sessionMode === 'arena') {
+      for (const player of results.standings) try { recordDeviceResult(scoreDimensions(),{handle:player.name||player.id,pnl:player.total,returnPct:player.total/STARTING_CASH*100}); } catch {}
+      arenaUI.finish(results);return;
+    }
     gameOverUI.show(results, currentUserId, accountManager);
+    if (results.partial && $('go-title')) $('go-title').textContent = 'Backtest stopped';
+    $('btn-export-backtest').hidden = !sessionSettings.fastBacktest;
     if (btnEditStrategy) btnEditStrategy.classList.toggle('hidden', sessionMode !== 'algorithmic');
     submitRun(results);
   }
@@ -2087,10 +2148,10 @@ function initApp() {
         id = uniquePlayerId(sanitizeHandle(data.handle));
         if (data.token) tokenToId.set(data.token, id);
         connectedPlayers.push({ id, isHost: false });
-        ledger.register(id);
+        if (sessionMode !== 'arena') ledger.register(id);
       } else if (!connectedPlayers.some((p) => p.id === id)) {
         connectedPlayers.push({ id, isHost: false }); // they dropped and came back
-        ledger.register(id);                          // (their account was dropped with them)
+        if (sessionMode !== 'arena') ledger.register(id);                          // (their account was dropped with them)
       }
       if (conn) connToId.set(conn, id);
       peerNetwork.send(conn, { type: 'WELCOME', token: data.token, playerId: id,
@@ -2122,7 +2183,7 @@ function initApp() {
 
   // The host's tab closing used to leave clients frozen with no explanation.
   eventBus.on('NET_HOST_LOST', () => {
-    if (role !== 'client') return;
+    if (role !== 'client' || completedResults || portfolioUI.snapshot?.finished) return;
     if (marketOpen) {
       marketOpen = false;
       eventBus.emit('MARKET_STATE', { open: false });
@@ -2164,7 +2225,7 @@ function initApp() {
         if (data.playerId !== currentUserId) toast(`That name was taken, so you're trading as ${data.playerId}.`, 'info');
         currentUserId = data.playerId;
         if (data.settings) sessionSettings = publicSettings(data.settings);
-        if (['discretionary', 'algorithmic', 'portfolio'].includes(data.mode)) sessionMode = data.mode;
+        if (['discretionary', 'algorithmic', 'portfolio', 'arena'].includes(data.mode)) sessionMode = data.mode;
         if (roomModeChip) roomModeChip.textContent = sessionLabel();
         if (waitingHint && publicSlot == null) waitingHint.textContent = sessionSettings.datasetLabel
           ? `${sessionSettings.datasetLabel} · ${sessionSettings.durationMinutes} minute session. The host chooses the data.`
@@ -2187,9 +2248,10 @@ function initApp() {
       case 'START_GAME':
         cancelPublicRollover();
         if (data.settings) sessionSettings = publicSettings(data.settings);
-        if (['discretionary', 'algorithmic', 'portfolio'].includes(data.mode)) sessionMode = data.mode;
+        if (['discretionary', 'algorithmic', 'portfolio', 'arena'].includes(data.mode)) sessionMode = data.mode;
         startRunTracking('multi');
         clientHistory = [];
+        runCurve = [];runTrades = [];chartConfig();
         marketOpen = true;
         eventBus.emit('MARKET_STATE', { open: true });
         accountManager.broadcastState();
@@ -2199,7 +2261,7 @@ function initApp() {
       case 'PM_STATE':
         if (sessionMode !== 'portfolio' || !data.snapshot) break;
         portfolioUI.show(data.snapshot);
-        if (data.snapshot.finished) marketOpen = false;
+        if (data.snapshot.finished) {marketOpen = false;finishPortfolioScore(data.snapshot);}
         break;
       case 'PM_SAVED':
         if (sessionMode === 'portfolio') portfolioUI.acknowledge(data.round);
@@ -2213,7 +2275,7 @@ function initApp() {
         const p = data.payload || {};
         if (p.points && p.points.length) {
           clientHistory.push(...p.points);
-          const overflow = clientHistory.length - (TOTAL_TICKS + 1);
+          const overflow = clientHistory.length - (sessionPlan(sessionSettings).totalTicks + 1);
           if (overflow > 0) clientHistory.splice(0, overflow);
         }
         eventBus.emit('TICK', { ...p, ...myPrivate, priceHistory: clientHistory });
@@ -2389,7 +2451,7 @@ function initApp() {
     role = 'lobby';
     resetRoomState();
     sessionMode = 'discretionary';
-    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES });
+    sessionSettings = publicSettings({ durationMinutes: GAME_DURATION_MINUTES, sessionDays: 1, barMinutes: 0.25 });
     sessionData = null;
     disposeAlgoRunner();
     currentUserId = getTraderName();
@@ -2416,7 +2478,7 @@ function initApp() {
     publicSlot = found.slot;
     if (found.role === 'host') {
       role = 'host';
-      ledger.register(currentUserId);
+      if (sessionMode !== 'arena') ledger.register(currentUserId);
       accountManager.setPlayerId(currentUserId);
       connectedPlayers = [{ id: currentUserId, isHost: true }];
       publicCountdown = new PublicCountdown({
@@ -2451,7 +2513,7 @@ function initApp() {
   function startSinglePlayer() {
     role = 'solo';
     currentUserId = getTraderName();
-    ledger.register(currentUserId);
+    if (sessionMode !== 'arena') ledger.register(currentUserId);
     accountManager.setPlayerId(currentUserId);
     if (sessionMode === 'portfolio' || sessionSettings.dataSource === 'historical') beginMarket();
     else aiReady.then(beginMarket);
@@ -2460,7 +2522,7 @@ function initApp() {
   async function startHosting() {
     role = 'host';
     currentUserId = getTraderName();
-    ledger.register(currentUserId);
+    if (sessionMode !== 'arena') ledger.register(currentUserId);
     accountManager.setPlayerId(currentUserId);
 
     const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -2539,16 +2601,53 @@ function initApp() {
     });
   }
 
+  $('btn-backtest')?.addEventListener('click',()=>{
+    if(role!=='lobby')return;
+    $('setup-source').value='historical';
+    showModeSelect('backtest',startSinglePlayer);
+  });
+  $('btn-live-pm')?.addEventListener('click',()=>{window.location.href='live-portfolio.html';});
+  $('backtest-pause')?.addEventListener('click',()=>{
+    if(!marketOpen)return;
+    if(gameLoop.paused){gameLoop.resume();$('backtest-pause').textContent='Pause';}
+    else {gameLoop.pause();$('backtest-pause').textContent='Resume';}
+  });
+  $('backtest-stop')?.addEventListener('click',()=>{
+    if(!marketOpen)return;gameLoop.stop();runTracker=null;closeMarket(true);
+  });
+  $('arena-export')?.addEventListener('click',()=>{
+    if(!gameLoop.arena?.agents)return;
+    const url=URL.createObjectURL(new Blob([JSON.stringify({format:'tm-arena-v1',agents:gameLoop.arena.agents.map(entry=>({id:entry.id,brain:entry.agent.toJSON()}))})],{type:'application/json'}));
+    const link=document.createElement('a');link.href=url;link.download='tomorrow-markets-arena.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  $('btn-export-backtest')?.addEventListener('click',()=>{
+    const rows=[['time','price','equity','cash','shares'],...runCurve.map(point=>[point.time,point.price,point.equity,point.cash,point.shares])];
+    const csv=rows.map(row=>row.map(value=>'"'+String(value).replaceAll('"','""')+'"').join(',')).join('\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='tomorrow-markets-backtest.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  eventBus.on('TRADE',trade=>{
+    if (sessionMode === 'arena') {
+      for (const [id,level] of [[trade.buyerId,'buy'],[trade.sellerId,'sell']]) if (id.startsWith('bot:arena:'))
+        eventBus.emit('ALGO_LOG',{playerId:id,name:id.endsWith(':A')?'DQN A':'DQN B',level,simTime:isAuthority()?gameLoop.currentTime():lastTick?.simTimeStr||'',text:`${level==='buy'?'Bought':'Sold'} ${trade.qty} @ $${trade.price.toFixed(2)}`});
+    }
+    if(trade.buyerId===currentUserId||trade.sellerId===currentUserId)runTrades.push({price:trade.price,qty:trade.qty});
+  });
+
   // ---- Mode choice & Algo Lab ------------------------------------------------
 
   async function chooseSessionMode(mode) {
     if (!pendingLaunch || preparingSession) return;
     preparingSession = true;
     const launch = pendingLaunch;
-    const buttons = [btnModeDiscretionary, btnModeAlgorithmic, btnModePortfolio, btnModeBack].filter(Boolean);
+    const buttons = [btnModeDiscretionary, btnModeAlgorithmic, btnModePortfolio, $('mode-arena'), btnModeBack].filter(Boolean);
     buttons.forEach((button) => { button.disabled = true; });
     try {
+      if (mode === 'arena' && pendingLaunch.kind === 'backtest') throw new Error('Backtests require an algorithmic strategy.');
+      if (pendingLaunch.kind === 'backtest') $('setup-source').value = 'historical';
+      if (pendingLaunch.kind === 'backtest' && mode !== 'algorithmic') throw new Error('Choose Algorithmic for a historical backtest.');
+      if (mode === 'arena') $('setup-source').value = 'simulated';
       const prepared = await challengeSetup.prepare(mode);
+      prepared.settings.fastBacktest = pendingLaunch.kind === 'backtest';
       if (pendingLaunch !== launch) return;
       sessionSettings = prepared.settings;
       sessionData = prepared.data;
@@ -2564,6 +2663,7 @@ function initApp() {
 
   btnModeDiscretionary?.addEventListener('click', () => chooseSessionMode('discretionary'));
   btnModeAlgorithmic?.addEventListener('click', () => chooseSessionMode('algorithmic'));
+  $('mode-arena')?.addEventListener('click', () => chooseSessionMode('arena'));
   btnModePortfolio?.addEventListener('click', () => chooseSessionMode('portfolio'));
 
   if (btnModeBack) btnModeBack.addEventListener('click', () => backToLobbyMenu());
