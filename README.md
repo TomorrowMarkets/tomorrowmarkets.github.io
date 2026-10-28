@@ -1,3 +1,12 @@
+Updates
+- Donations setup
+- historical data setup for trading challenges
+- portfolio management challenges + historical data
+- 
+
+
+
+
 
 These patch notes are to be taken with a grain of salt, as I will have to very publicly and very obviously explain that these are not going to be the public patch notes.
 I have made considerable reflections, developments and feature designs in advance and none of these will go up in the noted order as "content sharing" is more important
