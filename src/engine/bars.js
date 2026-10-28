@@ -77,3 +77,4 @@ export function resample(points, perBar, { originSecs, secsPerTick }) {
   }
   return out;
 }
+

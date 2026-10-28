@@ -185,8 +185,8 @@ export class OrderBook {
 
       if (this.eventBus) {
         this.eventBus.emit('TRADE', side === 'BUY'
-          ? { buyerId: playerId, sellerId: top.playerId, price: execPrice, qty: execQty, buyOrderId: orderId, sellOrderId: top.id }
-          : { buyerId: top.playerId, sellerId: playerId, price: execPrice, qty: execQty, buyOrderId: top.id, sellOrderId: orderId });
+          ? { buyerId: playerId, sellerId: top.playerId, price: execPrice, qty: execQty, buyOrderId: orderId, sellOrderId: top.id, aggressor: 'BUY' }
+          : { buyerId: top.playerId, sellerId: playerId, price: execPrice, qty: execQty, buyOrderId: top.id, sellOrderId: orderId, aggressor: 'SELL' });
       }
     }
     return { filledQty: filled, avgPrice: filled ? notional / filled : 0 };

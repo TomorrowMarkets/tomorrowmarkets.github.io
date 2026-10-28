@@ -1,6 +1,7 @@
 // Snapshot replay, not a reconstruction of the exchange's original queue.
 // Every snapshot replaces only historical liquidity, preserving players' orders.
 const HISTORICAL_ID = 'history:liquidity';
+import { sourceSessions } from './session.js';
 
 export function validateOrderbookDataset(raw) {
   if (!raw || raw.version !== 1 || raw.kind !== 'orderbook'
@@ -34,8 +35,10 @@ export function validateOrderbookDataset(raw) {
     };
     const bids = readLevels('bids');
     const asks = readLevels('asks');
+    if (frame.volume != null && (typeof frame.volume !== 'number' || !Number.isFinite(frame.volume) || frame.volume < 0)) throw new Error('Recorded volume must be a finite nonnegative number.');
     if (bids[0].price >= asks[0].price) throw new Error(`Frame ${i + 1} has a locked or crossed book.`);
-    return { timestamp: frame.timestamp, time, bids, asks };
+    return { timestamp: frame.timestamp, time, bids, asks, ...(frame.volume != null ? {volume:frame.volume} : {}),
+      ...(typeof frame.sessionDate === 'string' ? {sessionDate:frame.sessionDate} : {}) };
   });
   return { version: 1, kind: 'orderbook', currency: 'USD', symbol: String(raw.symbol || 'Replay'),
     demo: raw.demo === true, frames };
@@ -46,6 +49,8 @@ export class HistoricalMarket {
     this.book = orderBook;
     this.dataset = validateOrderbookDataset(dataset);
     this.frames = this.dataset.frames;
+    this.sessions = sourceSessions(this.dataset);
+    this.hasVolume = this.frames.every(frame => Number.isFinite(frame.volume));
     this.position = -1;
     this.timestamp = null;
   }
@@ -56,9 +61,12 @@ export class HistoricalMarket {
   }
 
   advance(progress, onSnapshot = null) {
-    const first = this.frames[0].time;
-    const last = this.frames[this.frames.length - 1].time;
-    const target = first + Math.min(1, Math.max(0, progress)) * (last - first);
+    const normalized = Math.min(1, Math.max(0, progress));
+    const index = Math.min(this.sessions.length - 1, Math.floor(normalized * this.sessions.length));
+    const local = normalized === 1 ? 1 : normalized * this.sessions.length - index;
+    const frames = this.sessions[index].frames;
+    const first = frames[0].time, last = frames.at(-1).time;
+    const target = first + local * (last - first);
     // Consume all crossed snapshots, even when chart updates are coarser than
     // the source. A snapshot is never replenished twice at the same timestamp.
     while (this.position + 1 < this.frames.length && this.frames[this.position + 1].time <= target) {
@@ -68,6 +76,7 @@ export class HistoricalMarket {
   }
 
   apply(frame) {
+    this.currentFrame = frame;
     this.book.clearPlayerOrders(HISTORICAL_ID);
     // Mark accounts to the recorded mid, not a player's outlying resting quote.
     this.book.referencePrice = (frame.bids[0].price + frame.asks[0].price) / 2;

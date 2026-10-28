@@ -68,3 +68,4 @@ export function simulateDay({ seed = null, keepTrades = false, onStep = null } =
   }
   return { bars, trades, fleet, book };
 }
+

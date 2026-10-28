@@ -7,3 +7,4 @@ random.js: the engine's random numbers; seed it and the same day plays out again
 simulate.js: runs a whole day with no UI (checks, backtests, generated data)
 
 After changing TUNING or the mix, check the market still behaves: `node tools/market-check.mjs`
+

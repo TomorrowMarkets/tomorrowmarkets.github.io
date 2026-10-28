@@ -131,3 +131,4 @@ export function vwap(bars) {
   }
   return out;
 }
+

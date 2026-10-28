@@ -255,7 +255,8 @@ export class MarketMakerBot extends BaseBot {
     this.cancelAll(); // re-quote every step
 
     // Spread: a base width plus a little extra when the market is jumpy, capped
-    const half = clamp(this.baseHalf * mid + 0.5 * m.tickSigma, 0.01, TUNING.makerMaxHalfSpread * mid);
+    const liquidity = this.fleet.eventState?.liquidity || 1;
+    const half = clamp((this.baseHalf * mid + 0.5 * m.tickSigma) / liquidity, 0.01, TUNING.makerMaxHalfSpread * mid);
     // Quotes centre between the market and the maker's view of fair value, so
     // prices follow news (a random walk) instead of their own momentum. Makers
     // that arrive with the US open lean with their cohort while the event lasts.
@@ -286,7 +287,7 @@ export class MarketMakerBot extends BaseBot {
       let ask = ceil2(centre + off);
       if (bestAsk != null) bid = Math.min(bid, round2(bestAsk - 0.01));
       if (bestBid != null) ask = Math.max(ask, round2(bestBid + 0.01));
-      const q = this.size * (i + 1);
+      const q = Math.max(1, Math.floor(this.size * (i + 1) * liquidity));
       if (!(full && this.shares > 0)) this.limit('BUY', bid, q);
       if (!(full && this.shares < 0)) this.limit('SELL', ask, q);
     }
@@ -904,3 +905,4 @@ export const BOT_TYPES = {
   randomBuyer: RandomBuyer,
   reverter: AggressiveReverter
 };
+

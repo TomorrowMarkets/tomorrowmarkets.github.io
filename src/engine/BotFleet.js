@@ -11,6 +11,7 @@
 import { BOT_TYPES, TUNING, rand, randInt } from './bots.js';
 import { random, gauss } from './random.js';
 import { RLTraderBot, AI_ID } from './ai/RLTrader.js';
+import { MarketEvents } from './MarketEvents.js';
 
 // ---- Tuning ----------------------------------------------------------------
 // Base population (1,000 agents): 90% noise traders of four kinds, 10% spread
@@ -270,6 +271,9 @@ export class BotFleet {
     this.aiAgent = ai;
     this.aiOptions = aiOptions;
     this.ai = null;
+    this.arenaAgents = null;
+    this.randomEvents = new MarketEvents({ onNews: (text) => this.news(text) });
+    this.eventState = { volatility: 1, liquidity: 1 };
 
     // Public market statistics (order flow, volume, the day's range) for the AI's features
     this.flowBuy = 0;
@@ -344,7 +348,7 @@ export class BotFleet {
     // Base population. Buyers, sellers and ladders start at staggered times
     // in the first two hours so their 2-hour cycles don't all line up.
     const stagger = this.ticksFor(120);
-    for (const [type, n] of Object.entries(BASE_MIX)) {
+    for (const [type, n] of Object.entries(this.active.size ? {} : BASE_MIX)) {
       for (let i = 0; i < n; i++) this.spawn(type, { cohort: 'base', delay: randInt(0, stagger) });
     }
 
@@ -361,9 +365,17 @@ export class BotFleet {
     this.events.sort((a, b) => a.at - b.at);
 
     // Tomorrow AI joins (it trades like everyone else from the first tick)
-    if (this.aiAgent) {
+    if (this.aiAgent && !this.ai) {
       this.ai = new RLTraderBot(AI_ID, this, { cohort: 'ai', agent: this.aiAgent, ...this.aiOptions });
       this.active.set(AI_ID, this.ai);
+      this.rosterDirty = true;
+    }
+
+    for (const entry of this.arenaAgents || []) {
+      if (this.active.has(entry.id)) continue;
+      const bot = new RLTraderBot(entry.id, this, { cohort: 'arena', agent: entry.agent,
+        learning: entry.learning === true, greedy: entry.learning !== true, record: false, every: 4 });
+      this.active.set(entry.id, bot);
       this.rosterDirty = true;
     }
 
@@ -383,6 +395,7 @@ export class BotFleet {
   onTick({ tick, simSeconds, history }) {
     this.tick = tick;
     this.simSeconds = simSeconds;
+    this.eventState = this.randomEvents.step(simSeconds, 60 / this.ticksPerMinute);
     while (this.events.length && this.events[0].at <= simSeconds) this.events.shift().run();
 
     const m = this.snapshot(history, tick);
@@ -390,7 +403,7 @@ export class BotFleet {
     // the market actually trades, so big trades leave a lasting mark.
     if (this.value == null) this.value = m.mid;
     const eventDrift = this.eventBias ? this.eventBias() * TUNING.valueEventDrift : 0;
-    this.value *= Math.exp(TUNING.valueVol * this.newsIntensity() * gauss() + eventDrift);
+    this.value *= Math.exp(this.eventState.jump + TUNING.valueVol * this.eventState.volatility * this.newsIntensity() * gauss() + eventDrift);
     this.value += TUNING.valuePull * (m.mid - this.value);
     m.value = this.value;
     // Attention ("heat"): how busy the last few minutes were against the last
@@ -455,11 +468,30 @@ export class BotFleet {
 
   // Closing bell: the AI gets its final reward for the day
   endDay(history) {
-    if (!this.ai) return;
+    const agents = [...this.active.values()].filter((bot) => bot.type === 'ai');
+    if (!agents.length) return;
     const m = this.snapshot(history, this.tick);
     m.value = this.value ?? m.mid;
     m.heat = Math.min(HEAT_RANGE[1], Math.max(HEAT_RANGE[0], this.slowVol > 0 ? this.fastVol / this.slowVol : 1));
-    this.ai.finish(m);
+    for (const agent of agents) agent.finish(m);
+  }
+
+  nextDay(history) {
+    // Overnight: accounts and the human GTC book persist. Temporary cohorts
+    // leave, and makers rebuild their quotes without spawning 1,000 new bots.
+    for (const bot of [...this.active.values()]) {
+      bot.cancelAll();
+      if (['open', 'us'].includes(bot.cohort)) this.retire(bot);
+    }
+    this.openingCrowd = [];
+    this.lastUsOpen = null;
+    this.eventBias = null;
+    this.randomEvents.reset();
+    this.vwapNum = 0; this.vwapDen = 0;
+    this.dayHigh = -Infinity; this.dayLow = Infinity;
+    this.dayOpen = this.book.getMidPrice();
+    this.start(history);
+    this.news('A new trading session is open. Positions and capital carry forward.');
   }
 
   // News doesn't arrive at an even pace: there are quiet stretches and busy
@@ -542,3 +574,4 @@ export class BotFleet {
     this.news('14:30 US markets are open: 200 new traders joined.');
   }
 }
+
