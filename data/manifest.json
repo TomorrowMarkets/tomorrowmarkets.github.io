@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "orderbooks": [
+    {
+      "id": "demo-orderbook",
+      "label": "Example orderbook replay · synthetic",
+      "path": "orderbooks/demo-book.json",
+      "demo": true
+    }
+  ],
+  "portfolios": [
+    {
+      "id": "demo-portfolio",
+      "label": "Example portfolio challenge · synthetic",
+      "path": "portfolio/demo-30.json",
+      "demo": true
+    }
+  ]
+}
