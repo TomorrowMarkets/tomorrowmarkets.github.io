@@ -57,13 +57,22 @@ Updates
 ### utilities
 - [ ] Donations setup
 - [ ] update a few UI corrections
+  - [ ] multiple leaderboards, for trading, discretionary, algo, historical, simulated, ...
+  - [ ] We need to color correct a few things
 - [ ] improve trading UI for algorithmic trading(remove the order setup on the right when doing algo)
+- [ ] We want to add "simple" code, where we setup something like one section for buy, one section for sell. where we than can add conditions, like.
+Buy if "std, mean, rsi, volume, price" is above/around/greater than or above, less than or... xyz, and ... We should also wish to add rolling or accumulating conditions
+Sell if "..." 
+We also want to add something like amount, limit order or so on buy or sell conditions.
 
 ### game modes
 - [ ] historical data setup for trading challenges
 - [ ] portfolio management challenges + historical data
-- [ ] Live PM run
-- [ ] Backtest setup fr algorithmic trading
+- [ ] Live PM run, such that players simply log on every day and propose how to adjust their portfolios and hold those for the day, than they compound continuously based on their proposed selections for the day, next day they get the return for those assets for the day.
+- [ ] Backtest setup for algorithmic trading, such that we can run just single player runs of historical with algorithms.
+- [ ] for the bots we want to add a range of more events to occur randomly, if you have any recommedation son improving bot behavior towards normal.
+- [ ] Also is there any way we can simply implement a RL bot vs bot arena, where players can observe?
+- [ ] We also want to extend the trading session from 1 day session to a 5 day session. Maybe we aggregate to 5 minutes, 10 minutes, 15 minutes so we can do 5 days in about 20 minutes.
 
 
 
