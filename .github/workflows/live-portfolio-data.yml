@@ -1,0 +1,29 @@
+name: Daily portfolio market data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 22 * * 1-5'
+permissions:
+  contents: read
+concurrency:
+  group: daily-portfolio-data
+  cancel-in-progress: false
+jobs:
+  update:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.TM_LIVE_PM_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TM_SUPABASE_URL: ${{ vars.TM_SUPABASE_URL }}
+      TM_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TM_SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Check configuration
+        run: python -c "import os; assert os.getenv('TM_SUPABASE_URL') and os.getenv('TM_SUPABASE_SERVICE_ROLE_KEY'), 'Configure the daily portfolio server settings first.'"
+      - run: python -m pip install -r tools/live-data-requirements.txt
+      - run: python tools/update-live-data.py --download --publish
