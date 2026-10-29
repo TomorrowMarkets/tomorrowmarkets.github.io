@@ -3,7 +3,7 @@ export const APP_CONFIG = Object.freeze({
   donations: {
     // Recommended: create a support/donation link in YOUR PayPal Business
     // account, verify the receiving account, then paste that HTTPS link.
-    url: '',
+    url: 'https://www.paypal.com/donate/?hosted_button_id=RM3VV34FJVZKU',
     provider: 'PayPal',
     recipient: 'Mark Brezina',
     // Optional alternatives. Blank URLs are hidden. The first active link
@@ -14,5 +14,8 @@ export const APP_CONFIG = Object.freeze({
     ]
   },
   // Resolves relative to the site's index.html, including GitHub Pages subpaths.
-  dataManifest: './data/manifest.json'
+  dataManifest: './data/manifest.json',
+  // Public market JSON may also be fetched from this exact storage origin.
+  allowedDataOrigins: ['https://jpsdqawilipmsineoufz.supabase.co']
 });
+
