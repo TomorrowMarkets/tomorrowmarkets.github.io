@@ -3,6 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { APP_CONFIG } from '../src/config/app-config.js';
 import {fileURLToPath} from 'node:url';
 
 const base = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -139,9 +140,14 @@ async function app() {
 const support=await app();
 await support.doc.querySelector('[data-support]').click();
 assert.equal(support.doc.getElementById('support-dialog').open,true);
-assert.match(support.doc.querySelector('[data-donation-status]').textContent,/coming soon/);
-assert.equal(support.doc.querySelector('[data-donation-link]').hidden,true);
-console.log('PASS support opens without an invented payment destination');
+const payment=support.doc.querySelector('[data-donation-link]');
+if(APP_CONFIG.donations.url){
+ assert.equal(payment.hidden,false);assert.equal(payment.href,new URL(APP_CONFIG.donations.url).href);
+ assert.match(support.doc.querySelector('[data-donation-status]').textContent,/creator/);
+}else{
+ assert.match(support.doc.querySelector('[data-donation-status]').textContent,/coming soon/);assert.equal(payment.hidden,true);
+}
+console.log('PASS support displays exactly the configured payment destination');
 
 const solo=await app();await solo.choose('solo','portfolio');
 assert.equal(solo.doc.getElementById('portfolio-screen').classList.contains('hidden'),false);
@@ -248,3 +254,4 @@ await long.click('mode-discretionary');assert.match(long.doc.getElementById('mod
 await long.advance(1000);assert.equal(long.errors.length,0);
 console.log('PASS long historical challenge settings reach the market clock');
 console.log('All integration checks passed. External services and selected UI modules were stubbed.');
+
