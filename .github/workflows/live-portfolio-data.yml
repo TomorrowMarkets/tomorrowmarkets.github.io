@@ -2,7 +2,7 @@ name: Daily portfolio market data
 on:
   workflow_dispatch:
   schedule:
-    - cron: '35 22 * * 1-5'
+    - cron: '35 22,23 * * 1-5' # Primary update and an idempotent late pass (UTC).
 permissions:
   contents: read
 concurrency:
@@ -26,4 +26,14 @@ jobs:
       - name: Check configuration
         run: python -c "import os; assert os.getenv('TM_SUPABASE_URL') and os.getenv('TM_SUPABASE_SERVICE_ROLE_KEY'), 'Configure the daily portfolio server settings first.'"
       - run: python -m pip install -r tools/live-data-requirements.txt
-      - run: python tools/update-live-data.py --download --publish
+      - name: Download, validate and publish completed sessions
+        env:
+          TM_HISTORICAL_PM_ENABLED: ${{ vars.TM_HISTORICAL_PM_ENABLED }}
+        shell: bash
+        run: |
+          publisher_args=(--download --publish)
+          if [[ "$TM_HISTORICAL_PM_ENABLED" == "true" ]]; then
+            publisher_args+=(--download-start 2015-01-01 --publish-history)
+          fi
+          python tools/update-live-data.py "${publisher_args[@]}"
+
