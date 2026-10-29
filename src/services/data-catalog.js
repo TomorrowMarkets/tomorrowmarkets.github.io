@@ -1,4 +1,5 @@
-// Datasets stay in the repository; only the authority loads future prices.
+// The authority loads future prices from this site or explicitly trusted storage.
+import { APP_CONFIG } from '../config/app-config.js';
 import { SESSION_DAY_OPTIONS, DURATION_OPTIONS, PORTFOLIO_ROUND_OPTIONS } from '../engine/session.js';
 export async function fetchJSON(url, { fetchImpl = globalThis.fetch, timeoutMs = 30000 } = {}) {
   const controller = new AbortController();
@@ -28,8 +29,11 @@ export async function loadCatalog(manifestPath, baseURL = document.baseURI, opti
       }
       ids.add(entry.id);
       const dataURL = new URL(entry.path, url);
-      if (dataURL.origin !== url.origin || !['http:', 'https:'].includes(dataURL.protocol)) {
-        throw new Error('Dataset paths must point to files on this site.');
+      const allowed = options.allowedDataOrigins ?? APP_CONFIG.allowedDataOrigins ?? [];
+      const local = dataURL.origin === url.origin && ['http:', 'https:'].includes(dataURL.protocol);
+      const storage = dataURL.protocol === 'https:' && allowed.includes(dataURL.origin);
+      if ((!local && !storage) || dataURL.username || dataURL.password) {
+        throw new Error('Dataset paths must use this site or an explicitly trusted HTTPS data origin.');
       }
       return { id: entry.id, label: entry.label, demo: entry.demo === true, url: dataURL.href };
     });
@@ -57,3 +61,4 @@ export function publicSettings(settings) {
     demo: settings.demo === true
   };
 }
+
