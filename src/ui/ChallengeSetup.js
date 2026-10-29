@@ -1,5 +1,6 @@
 import { loadCatalog, fetchJSON, publicSettings } from '../services/data-catalog.js';
 import { selectHistoricalSessions } from '../engine/session.js';
+import { sessionPlan } from '../engine/session.js';
 import { validateOrderbookDataset } from '../engine/HistoricalMarket.js';
 import { validatePortfolioDataset, chooseAnnualWindow } from '../engine/PortfolioChallenge.js';
 
@@ -51,6 +52,11 @@ export class ChallengeSetup {
   render() {
     this.byId('setup-summary').textContent = `Session settings · ${this.byId('setup-duration').value} min · ${this.byId('setup-days').value} trading day(s) · ${this.byId('setup-source').value === 'historical' ? 'Historical' : 'Simulated'}`;
     this.byId('setup-book-wrap').hidden = this.byId('setup-source').value !== 'historical';
+    const stride = Number(this.byId('setup-stride').value);
+    const seconds = Number(this.byId('setup-round-seconds').value);
+    this.byId('setup-pm-timing').textContent = `${seconds} seconds for every allocation round. About ${Math.ceil(Math.ceil(252/stride)*seconds/60)} minutes for a typical year; the exact duration appears when the random year is selected. Trading duration above does not shorten portfolio rounds.`;
+    const plan = sessionPlan({sessionDays:Number(this.byId('setup-days').value),barMinutes:Number(this.byId('setup-bar-minutes').value),durationMinutes:Number(this.byId('setup-duration').value)});
+    this.byId('setup-trading-timing').textContent = `${plan.totalTicks.toLocaleString()} completed bars · ${(plan.tickIntervalMs/1000).toFixed(1)} real seconds per decision bar. The order book updates between bars.${plan.tickIntervalMs<1000 ? ' Very fast compression; a longer duration gives strategies more time.' : ''} Historical runs require ${plan.sessionDays} recorded sessions.`;
     const option = this.byId('setup-portfolio-dataset').selectedOptions[0];
     this.byId('setup-status').textContent = option?.textContent.includes('DEMO')
       ? 'The included demo uses synthetic prices. Add a Yahoo Finance dataset to play with real history.'
@@ -64,7 +70,8 @@ export class ChallengeSetup {
       sessionDays: Number(this.byId('setup-days').value),
       barMinutes: Number(this.byId('setup-bar-minutes').value),
       arenaLearning: this.byId('setup-arena-learning').checked,
-      portfolioStride: Number(this.byId('setup-stride').value)
+      portfolioStride: Number(this.byId('setup-stride').value),
+      portfolioRoundSeconds: Number(this.byId('setup-round-seconds').value)
     });
     // Joining never loads a local dataset or dictates the host's settings.
     if (this.kind === 'join') return { settings, data: null };

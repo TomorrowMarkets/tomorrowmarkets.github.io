@@ -108,7 +108,7 @@ export class PortfolioUI {
     const returns = (snapshot.account.capital / 10000 - 1) * 100;
     text(this.root, 'pm-title', snapshot.finished ? 'Portfolio challenge complete' : 'Portfolio management');
     text(this.root, 'pm-source', `${snapshot.source}${snapshot.demo ? ' · DEMO — synthetic prices' : ''}`);
-    text(this.root, 'pm-window', `${snapshot.startDate} → ${snapshot.endDate} · 30 assets · ${snapshot.totalRounds} rounds`);
+    text(this.root, 'pm-window', `${snapshot.startDate} → ${snapshot.endDate} · 30 assets · ${snapshot.totalRounds} rounds · ${snapshot.roundMs / 1000}s per round · ${Math.ceil(snapshot.totalRounds * snapshot.roundMs / 60000)} min planned`);
     text(this.root, 'pm-date', snapshot.date);
     text(this.root, 'pm-round', snapshot.finished ? `${snapshot.totalRounds} / ${snapshot.totalRounds}` : `${snapshot.round + 1} / ${snapshot.totalRounds}`);
     text(this.root, 'pm-next-date', snapshot.finished ? 'Final valuation' : `Allocate for ${snapshot.date} → ${snapshot.nextDate}`);
@@ -156,6 +156,8 @@ export class PortfolioUI {
     if (!this.snapshot) return;
     const remaining = Math.max(0, this.snapshot.deadline - Date.now() - this.offset);
     text(this.root, 'pm-countdown', this.snapshot.finished ? 'Finished' : remaining > 0 ? `${Math.ceil(remaining / 1000)}s to save` : 'Waiting for next round…');
+    this.root.getElementById('pm-countdown').classList.toggle('neg', !this.snapshot.finished && remaining < 10000);
+    if (!this.snapshot.finished && remaining <= 0) this.root.getElementById('pm-save').disabled = true;
   }
 
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }

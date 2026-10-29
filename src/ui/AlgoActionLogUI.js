@@ -64,7 +64,7 @@ export class AlgoActionLogUI {
       this.standings.classList.add('hidden');
       this.standings.innerHTML = '';
     }
-    if (this.list) this.list.innerHTML = '<div class="empty">No strategy orders yet. The first decision round comes a few sim-minutes after the open.</div>';
+    if (this.list) this.list.innerHTML = '<div class="empty">No strategy orders yet. The first decision uses the opening snapshot; subsequent decisions follow completed bars.</div>';
     this.renderStrip();
   }
 

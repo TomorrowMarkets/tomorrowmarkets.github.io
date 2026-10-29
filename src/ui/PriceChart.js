@@ -552,7 +552,7 @@ export class PriceChart {
         }
         const vol = ohlc.querySelector('.cl-vol');
         vol.style.display = this.settings.volume ? '' : 'none';
-        vol.querySelector('[data-f="volume"]').textContent = compact.format(bar.volume);
+        vol.querySelector('[data-f="volume"]').textContent = this.volumeAvailable === false ? 'Unavailable' : compact.format(bar.volume);
       }
     }
     for (const ind of this.settings.indicators) {
@@ -572,7 +572,11 @@ export class PriceChart {
 
   onTick(data) {
     if (!data || !data.priceHistory) return;
+    const changed = this.historyLength !== data.priceHistory.length || this.lastHistoryPoint !== data.priceHistory.at(-1);
     this.history = data.priceHistory;
+    this.volumeAvailable = data.activity?.volumeAvailable !== false;
+    this.historyLength = data.priceHistory.length;
+    this.lastHistoryPoint = data.priceHistory.at(-1);
     if (data.simTimeStr && this.clockDisplay) this.clockDisplay.innerText = data.simTimeStr;
 
     const me = this.getCurrentUserId();
@@ -585,7 +589,7 @@ export class PriceChart {
         b.tp != null ? { price: b.tp, color: 'up', label: 'TP' } : null
       ].filter(Boolean))
     ];
-    this.recompute();
+    if (changed) this.recompute();
     this.requestDraw();
   }
 
@@ -749,7 +753,7 @@ export class PriceChart {
     ctx.clip();
 
     // ---- volume
-    if (this.settings.volume) {
+    if (this.settings.volume && this.volumeAvailable !== false) {
       let maxV = 0;
       for (let i = start; i < n; i++) maxV = Math.max(maxV, bars[i].volume);
       const vBase = price.top + price.h - 1;
