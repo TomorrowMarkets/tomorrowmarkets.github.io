@@ -1,0 +1,1 @@
+export const MAX_PUBLIC_PLAYERS=20,MIN_PUBLIC_PLAYERS=2;export const describeSlot=()=>'';export const findPublicRoom=async()=>null;export class PublicCountdown{stop(){}update(){}}
