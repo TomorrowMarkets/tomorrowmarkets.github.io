@@ -1,0 +1,1 @@
+export class PriceChart{constructor(bus){bus.on('TICK',d=>{document.getElementById('sim-clock').textContent=d.simTimeStr;});}}

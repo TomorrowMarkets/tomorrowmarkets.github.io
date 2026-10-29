@@ -1,0 +1,1 @@
+export const rememberHandle=()=>{};export const mountHandleField=(input)=>{input.value='QA';};

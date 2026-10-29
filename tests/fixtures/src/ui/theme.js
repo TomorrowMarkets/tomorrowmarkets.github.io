@@ -1,0 +1,1 @@
+export const mountSettingsButtons=()=>{};export const onThemeChange=()=>{};export const themeColors=()=>({ink:'#000'});
