@@ -112,3 +112,39 @@
   .pm-weight { width: 4.8rem; }
   .support-card { margin-top: 1.3rem; }
 }
+
+/* Trading workspaces: independently scrolling panels and readable depth/tape. */
+#trading-screen .trading-grid { grid-template-columns:minmax(0,1fr) minmax(15rem,18rem) minmax(18rem,21rem); grid-template-rows:minmax(26rem,1.8fr) minmax(15rem,1fr); grid-template-areas:"chart book side" "ind activity side"; }
+#trading-screen.is-algorithmic .trading-grid { grid-template-columns:minmax(0,1fr) minmax(15rem,18rem) minmax(17rem,20rem); grid-template-rows:minmax(25rem,1.5fr) minmax(18rem,1fr); }
+#trading-screen.is-algorithmic .positions-panel { min-height:23rem; }
+.area-activity { grid-area:activity; min-height:0; overflow:hidden; }
+.market-context { display:flex; align-items:center; justify-content:space-between; gap:.5rem 1rem; flex-wrap:wrap; padding:.45rem 1rem; border-bottom:1px solid var(--line); color:var(--muted); font-size:10.5px; }
+.market-context strong { font-weight:500; color:var(--ink); }
+.activity-heading { display:flex; align-items:baseline; justify-content:space-between; gap:.4rem; flex-wrap:wrap; }
+.activity-stats { display:grid; grid-template-columns:1fr 1fr; gap:.4rem; margin:.5rem 0; }
+.activity-stats dt { color:var(--muted); font-size:9.5px; }
+.activity-stats dd { color:var(--ink); font-size:12px; font-weight:600; }
+.market-print { display:grid; grid-template-columns:1.15fr .8fr 1fr .9fr; gap:.3rem; padding:.25rem 0; font-size:10px; border-bottom:1px solid var(--line); }
+.market-print > span:nth-last-child(-n+2) { text-align:right; }
+.market-print-head { color:var(--faint); font-size:9px; }
+.market-tape { overflow-y:auto; min-height:3rem; flex:1; }
+.activity-note { font-size:9px; color:var(--muted); line-height:1.4; margin-top:.4rem; }
+.ticket-help { color:var(--muted); font-size:10px; line-height:1.5; }
+.ticket-presets { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+.ticket-presets > span { font-size:10px; color:var(--muted); margin-right:auto; }
+.lvl[data-book-price] { width:100%; text-align:inherit; cursor:pointer; border:0; background-color:transparent; }
+.lvl[data-book-price]:hover { outline:1px solid var(--line-hover); }
+.pm-save-bar { position:sticky; bottom:0; background:var(--card); border-top:1px solid var(--line); padding:.8rem .3rem; z-index:2; }
+.pm-round-bar { position:sticky; top:0; z-index:3; background:var(--card); padding:.6rem 0; }
+@media (max-width:1179px) {
+ #trading-screen .trading-grid,#trading-screen.is-algorithmic .trading-grid { grid-template-columns:minmax(0,1fr) minmax(17rem,.8fr); grid-template-rows:24rem 29rem 21rem; grid-template-areas:"chart chart" "book side" "ind activity"; }
+ #trading-screen .area-side { overflow-y:auto; }
+}
+@media (max-width:699px) {
+ #trading-screen .trading-grid,#trading-screen.is-algorithmic .trading-grid { grid-template-columns:minmax(0,1fr); grid-template-rows:22rem auto 30rem 23rem 23rem; grid-template-areas:"chart" "side" "book" "activity" "ind"; }
+ #trading-screen .area-side { overflow:visible; }
+ #trading-screen .positions-panel { min-height:23rem; }
+ #trading-screen > header .wordmark { font-size:15px; }
+ #trading-screen .area-chart > div:first-child > div { flex-wrap:wrap; }
+ #mode-badge { max-width:calc(100vw - 3rem); }
+}
