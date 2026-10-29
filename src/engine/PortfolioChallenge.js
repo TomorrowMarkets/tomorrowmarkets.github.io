@@ -2,6 +2,7 @@
 // Fractional shares, no shorting/leverage/fees, cash earns 0%. The last saved
 // target weights rebalance automatically at each round boundary.
 const DAY_MS = 86400000;
+import { PORTFOLIO_ROUND_OPTIONS } from './session.js';
 export const PORTFOLIO_STARTING_CAPITAL = 10000;
 
 function validDate(value) {
@@ -83,16 +84,16 @@ function growth(prices, from, to, weights) {
 }
 
 export class PortfolioChallenge {
-  constructor(raw, { durationMinutes = 15, stride = 5, rng = Math.random } = {}) {
-    if (![10, 15, 20].includes(durationMinutes)) throw new Error('Portfolio duration must be 10, 15 or 20 minutes.');
+  constructor(raw, { roundSeconds = 30, stride = 5, rng = Math.random } = {}) {
+    if (!PORTFOLIO_ROUND_OPTIONS.includes(roundSeconds)) throw new Error('Portfolio rounds must allow 30, 45, 60 or 90 seconds.');
     if (![1, 5].includes(stride)) throw new Error('Portfolio rounds must span one or five trading days.');
     this.data = validatePortfolioDataset(raw);
     this.window = chooseAnnualWindow(this.data, rng);
     this.endpoints = [this.window.start];
     for (let i = this.window.start + stride; i < this.window.end; i += stride) this.endpoints.push(i);
     this.endpoints.push(this.window.end);
-    this.roundMs = durationMinutes * 60000 / (this.endpoints.length - 1);
-    this.durationMinutes = durationMinutes;
+    this.roundMs = roundSeconds * 1000;
+    this.durationMinutes = this.roundMs * (this.endpoints.length - 1) / 60000;
     this.players = new Map();
     this.round = 0;
     this.started = false;
@@ -169,7 +170,7 @@ export class PortfolioChallenge {
       round: this.round, totalRounds: this.endpoints.length - 1, finished: this.finished,
       date: this.data.dates[row], startDate: this.data.dates[first], endDate: this.data.dates[this.window.end],
       nextDate: this.finished ? null : this.data.dates[this.endpoints[this.round + 1]],
-      deadline: this.deadline, roundMs: this.roundMs, serverNow: Date.now(),
+      deadline: this.deadline, roundMs: this.roundMs, durationMinutes: this.durationMinutes, serverNow: Date.now(),
       source: this.data.source, demo: this.data.demo, benchmark,
       assets: this.data.assets.map((asset, i) => ({ ...asset, price: this.data.prices[row][i],
         periodReturn: (this.data.prices[row][i] / this.data.prices[previous][i] - 1) * 100,

@@ -35,9 +35,20 @@ export function validateOrderbookDataset(raw) {
     };
     const bids = readLevels('bids');
     const asks = readLevels('asks');
-    if (frame.volume != null && (typeof frame.volume !== 'number' || !Number.isFinite(frame.volume) || frame.volume < 0)) throw new Error('Recorded volume must be a finite nonnegative number.');
+    if (frame.volume != null && (!Number.isSafeInteger(frame.volume) || frame.volume < 0)) throw new Error('Recorded volume must be a nonnegative whole-share quantity.');
+    let trades;
+    if (frame.trades != null) {
+      if (!Array.isArray(frame.trades) || frame.trades.length > 10000) throw new Error('Recorded trades must be an array of at most 10,000 prints per snapshot.');
+      trades = frame.trades.map(trade => {
+        if (!trade || !Number.isFinite(trade.price) || trade.price <= 0 || Math.abs(trade.price*100-Math.round(trade.price*100))>1e-6
+          || !Number.isSafeInteger(trade.qty) || trade.qty < 1 || !['BUY','SELL','UNKNOWN'].includes(trade.side || 'UNKNOWN')) throw new Error('Recorded prints need a positive cent price, whole-share quantity and BUY/SELL/UNKNOWN aggressor.');
+        return {price:trade.price,qty:trade.qty,side:trade.side || 'UNKNOWN'};
+      });
+      const total = trades.reduce((sum,trade)=>sum+trade.qty,0);
+      if (!Number.isSafeInteger(total) || (frame.volume != null && frame.volume !== total)) throw new Error('Snapshot volume must equal its recorded trade quantities when trades are provided.');
+    }
     if (bids[0].price >= asks[0].price) throw new Error(`Frame ${i + 1} has a locked or crossed book.`);
-    return { timestamp: frame.timestamp, time, bids, asks, ...(frame.volume != null ? {volume:frame.volume} : {}),
+    return { timestamp: frame.timestamp, time, bids, asks, ...(trades ? {trades,volume:trades.reduce((sum,t)=>sum+t.qty,0)} : frame.volume != null ? {volume:frame.volume} : {}),
       ...(typeof frame.sessionDate === 'string' ? {sessionDate:frame.sessionDate} : {}) };
   });
   return { version: 1, kind: 'orderbook', currency: 'USD', symbol: String(raw.symbol || 'Replay'),
@@ -51,19 +62,25 @@ export class HistoricalMarket {
     this.frames = this.dataset.frames;
     this.sessions = sourceSessions(this.dataset);
     this.hasVolume = this.frames.every(frame => Number.isFinite(frame.volume));
+    this.hasTrades = this.frames.every(frame => Array.isArray(frame.trades));
+    const gaps = this.sessions.flatMap(day => day.frames.slice(1).map((frame,i)=>(frame.time-day.frames[i].time)/1000)).sort((a,b)=>a-b);
+    this.resolutionSeconds = gaps.length ? gaps[Math.floor(gaps.length/2)] : null;
     this.position = -1;
     this.timestamp = null;
   }
 
-  start() {
+  start(onSnapshot = null) {
     this.position = -1;
-    this.advance(0);
+    this.advance(0, onSnapshot);
   }
 
   advance(progress, onSnapshot = null) {
     const normalized = Math.min(1, Math.max(0, progress));
-    const index = Math.min(this.sessions.length - 1, Math.floor(normalized * this.sessions.length));
-    const local = normalized === 1 ? 1 : normalized * this.sessions.length - index;
+    const scaled = normalized * this.sessions.length;
+    // An exact close belongs to the day just completed. Tomorrow's opening
+    // quote must not leak into the preceding day's final decision bar.
+    const index = Math.max(0, Math.min(this.sessions.length - 1, Math.ceil(scaled) - 1));
+    const local = normalized === 0 ? 0 : scaled - index;
     const frames = this.sessions[index].frames;
     const first = frames[0].time, last = frames.at(-1).time;
     const target = first + local * (last - first);

@@ -5,6 +5,7 @@
 // "close when flat", "sell 10 steps later") act on what really executed.
 
 import { random, gauss } from './random.js';
+import { volumeSchedule } from './MarketRegimes.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const floor2 = (n) => Math.floor(n * 100 + 1e-9) / 100;
@@ -467,8 +468,8 @@ export class TrendBot1 extends BaseBot {
     if (m.length <= this.window || !chance(this.activity)) return;
     const score = m.upDownScore(this.window);
     if (this.shares === 0) {
-      if (score >= this.enter && this.allows('BUY')) this.market('BUY', this.size);
-      else if (score <= -this.enter && this.allows('SELL')) this.market('SELL', this.size);
+      if (score >= this.enter / (m.trendWeight || 1) && this.allows('BUY')) this.market('BUY', this.size);
+      else if (score <= -this.enter / (m.trendWeight || 1) && this.allows('SELL')) this.market('SELL', this.size);
     } else if (
       Math.abs(score) <= this.flat ||
       (this.shares > 0 && score <= -this.enter) ||
@@ -495,7 +496,7 @@ export class TrendBot2 extends BaseBot {
   }
 
   onTick(m) {
-    if (!chance(this.activity)) return;
+    if (!chance(this.activity * (m.trendWeight || 1))) return;
     const imb = m.imbalance;
     const qty = randInt(10, 200);
     if (imb > this.threshold && this.allows('BUY')) {
@@ -527,7 +528,7 @@ export class TrendBot3 extends BaseBot {
   onTick(m) {
     if (m.length <= this.lookback || this.fleet.tick < this.cooldownUntil) return;
     const move = m.ret(this.lookback);
-    if (Math.abs(m.moveZ(this.lookback)) < this.z || Math.abs(move) < 0.0008) return;
+    if (Math.abs(m.moveZ(this.lookback)) < this.z / (m.trendWeight || 1) || Math.abs(move) < 0.0008) return;
     const side = move > 0 ? 'BUY' : 'SELL';
     if (!this.allows(side)) return;
     this.market(side, this.capped(side, randInt(4, 15)));
@@ -592,8 +593,8 @@ export class MRBot2 extends BaseBot {
     if (!chance(this.activity)) return;
     const imb = m.imbalance;
     if (this.shares === 0) {
-      if (imb <= -this.enter && this.allows('SELL')) this.market('SELL', this.size);
-      else if (imb >= this.enter && this.allows('BUY')) this.market('BUY', this.size);
+      if (imb <= -this.enter / (m.reversionWeight || 1) && this.allows('SELL')) this.market('SELL', this.size);
+      else if (imb >= this.enter / (m.reversionWeight || 1) && this.allows('BUY')) this.market('BUY', this.size);
     } else if (Math.abs(imb) <= this.exit) {
       this.flatten();
     }
@@ -618,7 +619,7 @@ export class MRBot3 extends BaseBot {
   onTick(m) {
     if (m.length < 10 || this.fleet.tick < this.cooldownUntil) return;
     const z = m.devZ(10);
-    if (Math.abs(z) < this.z || Math.abs(m.mid / m.sma(10) - 1) < 0.0008) return;
+    if (Math.abs(z) < this.z / (m.reversionWeight || 1) || Math.abs(m.mid / m.sma(10) - 1) < 0.0008) return;
     if (z > 0 && this.allows('SELL')) this.market('SELL', this.capped('SELL', 10));
     else if (z < 0 && this.allows('BUY')) this.market('BUY', this.capped('BUY', 10));
     else return;
@@ -885,7 +886,92 @@ export class AggressiveReverter extends BaseBot {
   }
 }
 
+// Specialist agents have finite position limits and use only observed state.
+// Parent execution orders reset their target each session; unfilled slices are
+// cancelled before replacement, so partial fills cannot overrun the parent.
+export class ExecutionBot extends BaseBot {
+  constructor(id,fleet,opts={}){super(id,fleet,opts);this.epoch=0;this.maxPosition=3000;}
+  onTick(m){
+    const day=this.fleet.regimes?.day||1;
+    if(this.epoch!==day){this.cancelAll();this.epoch=day;this.side=chance(0.5)?'BUY':'SELL';
+      this.startShares=this.shares;this.parentQty=randInt(400,1400);this.nextSlice=this.fleet.tick+randInt(1,20);}
+    if(this.fleet.tick<this.nextSlice)return;
+    this.cancelAll();this.nextSlice=this.fleet.tick+this.fleet.ticksFor(rand(0.5,2.5));
+    const progress=clamp((m.simSeconds-this.fleet.openSecs)/(this.fleet.closeSecs-this.fleet.openSecs),0,1);
+    const target=this.parentQty*(this.type==='vwap'?volumeSchedule(progress):progress);
+    const filled=(this.shares-this.startShares)*(this.side==='BUY'?1:-1);
+    const qty=Math.floor(this.capped(this.side,Math.min(80,Math.max(0,target-filled))));
+    if(!qty)return;
+    if(progress>0.94||chance(0.35))this.market(this.side,qty);
+    else {const touch=this.side==='BUY'?this.book.bestBid():this.book.bestAsk();
+      if(touch)this.limit(this.side,touch,qty,this.fleet.ticksFor(2));}
+  }
+}
+export class TWAPBot extends ExecutionBot {static TYPE='twap';}
+export class VWAPBot extends ExecutionBot {static TYPE='vwap';}
+export class FundamentalBot extends BaseBot {
+  static TYPE='fundamental';
+  constructor(id,fleet,opts={}){super(id,fleet,opts);this.maxPosition=randInt(100,350);this.edge=rand(0.0015,0.004);this.nextReview=0;this.valuationNoise=rand(-0.001,0.001);}
+  onTick(m){
+    if(this.fleet.tick<this.nextReview)return;this.nextReview=this.fleet.tick+this.fleet.ticksFor(rand(2,8));
+    this.cancelAll();const estimate=m.value*(1+this.valuationNoise),gap=estimate/m.mid-1;
+    if(Math.abs(gap)<this.edge){if(this.shares&&Math.abs(gap)<this.edge/3)this.flatten();return;}
+    const side=gap>0?'BUY':'SELL',qty=this.capped(side,humanSize(20,70));
+    if(Math.abs(gap)>3*this.edge)this.market(side,qty);
+    else this.limit(side,side==='BUY'?Math.min(estimate,m.mid-0.01):Math.max(estimate,m.mid+0.01),qty,this.fleet.ticksFor(8));
+  }
+}
+export class BreakoutBot extends BaseBot {
+  static TYPE='breakout';
+  constructor(id,fleet,opts={}){super(id,fleet,opts);this.maxPosition=180;this.lookback=fleet.ticksFor(randInt(10,35));this.nextReview=0;}
+  onTick(m){
+    if(this.shares&&(this.pnlPct(m.mid)<-0.005||this.pnlPct(m.mid)>0.012)){this.flatten();this.nextReview=this.fleet.tick+this.fleet.ticksFor(5);return;}
+    if(this.fleet.tick<this.nextReview||m.length<=this.lookback)return;
+    this.nextReview=this.fleet.tick+randInt(3,10);
+    if(!chance(0.2*(m.trendWeight||1))||m.lastVolume<0.9*m.volumeEma)return;
+    const bounds=m.memo(`breakout:${this.lookback}`,()=>{const prices=m.history.slice(-this.lookback-1,-1).map(p=>p.price);return {high:Math.max(...prices),low:Math.min(...prices)};});
+    const side=m.mid>bounds.high+0.01?'BUY':m.mid<bounds.low-0.01?'SELL':null;
+    if(side)this.market(side,this.capped(side,humanSize(18,60)));
+  }
+}
+export class OrderFlowBot extends BaseBot {
+  static TYPE='orderFlow';
+  constructor(id,fleet,opts={}){super(id,fleet,opts);this.maxPosition=140;this.nextReview=0;}
+  onTick(m){
+    if(this.fleet.tick<this.nextReview)return;this.nextReview=this.fleet.tick+randInt(3,8);this.cancelAll();
+    const signal=0.7*m.flowEma+0.3*m.imbalance;
+    if(this.shares&&(Math.abs(signal)<0.08||this.pnlPct(m.mid)<-0.003)){this.flatten();return;}
+    if(Math.abs(signal)<0.35||m.lastVolume===0)return;
+    const side=signal>0?'BUY':'SELL',qty=this.capped(side,humanSize(12,40));
+    if(Math.abs(signal)>0.65)this.market(side,qty);
+    else this.limit(side,side==='BUY'?this.book.bestBid():this.book.bestAsk(),qty,randInt(3,8));
+  }
+}
+export class RiskManagerBot extends BaseBot {
+  static TYPE='riskManager';
+  constructor(id,fleet,opts={}){super(id,fleet,opts);this.maxPosition=220;this.nextReview=0;this.epoch=0;}
+  onTick(m){
+    if(this.fleet.tick<this.nextReview)return;this.nextReview=this.fleet.tick+this.fleet.ticksFor(rand(1,4));this.cancelAll();
+    const day=this.fleet.regimes?.day||1;
+    if(day!==this.epoch){this.epoch=day;this.preferred=chance(0.5)?1:-1;}
+    const stress=m.regime?.id==='stress'||(m.heat>1.8),closing=m.simSeconds>this.fleet.closeSecs-30*60;
+    if(this.shares&&(stress||closing||this.pnlPct(m.mid)<-0.007)){
+      const side=this.shares>0?'SELL':'BUY';this.market(side,Math.min(Math.abs(this.shares),humanSize(35,90)));return;
+    }
+    if(stress||closing||!chance(0.3))return;
+    const target=Math.round(this.preferred*this.maxPosition/(1+Math.max(0,m.heat-1)));
+    const delta=target-this.shares,side=delta>0?'BUY':'SELL',qty=this.capped(side,Math.min(25,Math.abs(delta)));
+    this.limit(side,side==='BUY'?m.mid-0.03:m.mid+0.03,qty,this.fleet.ticksFor(3));
+  }
+}
+
 export const BOT_TYPES = {
+  twap: TWAPBot,
+  vwap: VWAPBot,
+  fundamental: FundamentalBot,
+  breakout: BreakoutBot,
+  orderFlow: OrderFlowBot,
+  riskManager: RiskManagerBot,
   noise: NoiseBot,
   marketMaker: MarketMakerBot,
   whale: WhaleBot,

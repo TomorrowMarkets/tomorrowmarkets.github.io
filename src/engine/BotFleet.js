@@ -12,13 +12,19 @@ import { BOT_TYPES, TUNING, rand, randInt } from './bots.js';
 import { random, gauss } from './random.js';
 import { RLTraderBot, AI_ID } from './ai/RLTrader.js';
 import { MarketEvents } from './MarketEvents.js';
+import { MarketRegimes } from './MarketRegimes.js';
 
 // ---- Tuning ----------------------------------------------------------------
-// Base population (1,000 agents): 90% noise traders of four kinds, 10% spread
-// over the other 14 types. Hourly joiners are drawn with the same weights, so
-// the mix stays 90/10.
+// Base population: 1,000 agents, including six specialist behaviours.
+// Hourly joiners use the same mix; market makers have a separate minimum.
 export const BASE_MIX = {
-  noise: 700,        // 90% noise traders of four kinds:
+  noise: 662,
+  twap: 8,
+  vwap: 8,
+  fundamental: 8,
+  breakout: 5,
+  orderFlow: 5,
+  riskManager: 4,
   randomLimit: 100,  //   random limit givers
   randomBuyer: 60,   //   everyday investors who buy at random
   reverter: 40,      //   aggressive reverters (push / revert / hold after a run)
@@ -224,7 +230,7 @@ export class MarketState {
 
   // Participation multiplier for attention-driven traders
   get attention() {
-    return this.memo('attention', () => this.heat ** TUNING.heatPower);
+    return this.memo('attention', () => this.heat ** TUNING.heatPower * (this.participation || 1));
   }
 
   get bidLevels() { return this.memo('bidLv', () => this.book.levels('BUY', 10)); }
@@ -274,6 +280,8 @@ export class BotFleet {
     this.arenaAgents = null;
     this.randomEvents = new MarketEvents({ onNews: (text) => this.news(text) });
     this.eventState = { volatility: 1, liquidity: 1 };
+    this.regimes = new MarketRegimes({open:openSecs,close:closeSecs,onChange:text=>this.news(text)});
+    this.regimeState = null;
 
     // Public market statistics (order flow, volume, the day's range) for the AI's features
     this.flowBuy = 0;
@@ -345,6 +353,7 @@ export class BotFleet {
   // ---- the day ----------------------------------------------------------
 
   start(history) {
+    if (!this.regimes.day) this.regimes.nextDay();
     // Base population. Buyers, sellers and ladders start at staggered times
     // in the first two hours so their 2-hour cycles don't all line up.
     const stagger = this.ticksFor(120);
@@ -395,7 +404,10 @@ export class BotFleet {
   onTick({ tick, simSeconds, history }) {
     this.tick = tick;
     this.simSeconds = simSeconds;
-    this.eventState = this.randomEvents.step(simSeconds, 60 / this.ticksPerMinute);
+    this.regimeState = this.regimes.step(simSeconds);
+    const event = this.randomEvents.step(simSeconds, 60 / this.ticksPerMinute);
+    this.eventState = {...event,volatility:event.volatility*this.regimeState.volatility,
+      liquidity:Math.max(0.3,Math.min(1.8,event.liquidity*this.regimeState.liquidity))};
     while (this.events.length && this.events[0].at <= simSeconds) this.events.shift().run();
 
     const m = this.snapshot(history, tick);
@@ -403,9 +415,13 @@ export class BotFleet {
     // the market actually trades, so big trades leave a lasting mark.
     if (this.value == null) this.value = m.mid;
     const eventDrift = this.eventBias ? this.eventBias() * TUNING.valueEventDrift : 0;
-    this.value *= Math.exp(this.eventState.jump + TUNING.valueVol * this.eventState.volatility * this.newsIntensity() * gauss() + eventDrift);
+    this.value *= Math.exp(this.eventState.jump + TUNING.valueVol * this.eventState.volatility * this.newsIntensity() * gauss() + eventDrift + this.regimeState.drift);
     this.value += TUNING.valuePull * (m.mid - this.value);
     m.value = this.value;
+    m.participation = this.regimeState.activity;
+    m.regime = this.regimeState;
+    m.trendWeight = this.regimeState.trendWeight;
+    m.reversionWeight = this.regimeState.reversionWeight;
     // Attention ("heat"): how busy the last few minutes were against the last
     // hour. A moving market draws people in, so noise-type traders trade more
     // when it's hot and volume rises and falls with volatility, as it does
@@ -490,6 +506,16 @@ export class BotFleet {
     this.vwapNum = 0; this.vwapDen = 0;
     this.dayHigh = -Infinity; this.dayLow = Infinity;
     this.dayOpen = this.book.getMidPrice();
+    this.flowBuy=0;this.flowSell=0;this.lastFlow=0;this.flowEma=0;this.lastVolume=0;
+    this.regimes.nextDay();
+    // Bound long-session population drift while keeping all six specialist
+    // types represented and preserving the existing makers' liquidity floor.
+    const churn=[...this.active.values()].filter(bot=>bot.cohort==='churn');
+    shuffle(churn);
+    while(this.active.size>1200&&churn.length)this.retire(churn.pop());
+    const types=this.countByType();
+    for(const type of ['twap','vwap','fundamental','breakout','orderFlow','riskManager'])
+      if(!types[type])this.spawn(type,{cohort:'base'});
     this.start(history);
     this.news('A new trading session is open. Positions and capital carry forward.');
   }
@@ -531,7 +557,7 @@ export class BotFleet {
 
   hourlyChurn() {
     const n = randInt(10, 100);
-    if (random() < 0.5) {
+    if (this.size < 1400 && (this.size < 850 || random() < 0.5)) {
       for (let i = 0; i < n; i++) this.spawn(weightedPick(BASE_MIX), { cohort: 'churn' });
       this.news(`${n} new traders joined the market.`);
       return;
