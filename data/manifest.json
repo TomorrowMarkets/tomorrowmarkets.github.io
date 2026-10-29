@@ -3,8 +3,14 @@
   "orderbooks": [
     {
       "id": "demo-orderbook",
-      "label": "Five-session orderbook replay \u00b7 synthetic",
+      "label": "Five-session replay \u00b7 15-second synthetic quotes + trades",
       "path": "orderbooks/demo-book.json",
+      "demo": true
+    },
+    {
+      "id": "demo-orderbook-20",
+      "label": "20-session replay \u00b7 1-minute synthetic quotes + trades",
+      "path": "orderbooks/demo-book-20.json",
       "demo": true
     }
   ],
