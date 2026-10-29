@@ -1,20 +1,27 @@
 import { getClient, ensureSession } from './leaderboard-api.js';
 export const BOARD_STORAGE = 'tomorrowMarkets.boards.v2';
 
+import { SESSION_DAY_OPTIONS,DURATION_OPTIONS,PORTFOLIO_ROUND_OPTIONS } from '../engine/session.js';
 export function boardDimensions(input = {}) {
   const challenge = ['trading','portfolio','backtest','arena'].includes(input.challenge) ? input.challenge : 'trading';
-  return { version:2, challenge,
+  const legacy=Number(input.version)===2;
+  const value={version:legacy?2:3,challenge,
     strategy:challenge==='portfolio'?'discretionary':challenge==='arena'?'rl':challenge==='backtest'&&input.strategy!=='simple'?'algorithmic':['discretionary','algorithmic','simple','rl'].includes(input.strategy)?input.strategy:'discretionary',
     source:['portfolio','backtest'].includes(challenge)?'historical':challenge==='arena'?'simulated':['simulated','historical'].includes(input.source)?input.source:'simulated',
-    sessionDays:challenge==='portfolio'?365:input.sessionDays===1?1:5,
+    sessionDays:challenge==='portfolio'?365:(legacy?[1,5]:SESSION_DAY_OPTIONS).includes(input.sessionDays)?input.sessionDays:5,
     barMinutes:challenge==='portfolio'?0:[0.25,5,10,15].includes(input.barMinutes)?input.barMinutes:5,
-    durationMinutes:challenge==='backtest'?0:[10,15,20].includes(input.durationMinutes)?input.durationMinutes:20,
+    durationMinutes:challenge==='backtest'||(challenge==='portfolio'&&!legacy)?0:(legacy?[10,15,20]:DURATION_OPTIONS).includes(input.durationMinutes)?input.durationMinutes:20,
     playMode:input.playMode==='multi'?'multi':'single',
     roundDays:challenge==='portfolio'&&input.roundDays===1?1:5,
-    datasetId:String(input.datasetId||(input.source==='historical'?'historical':'simulation-v2')).replace(/[^A-Za-z0-9_.-]/g,'').slice(0,100)||'dataset'
+    datasetId:String(input.datasetId||(input.source==='historical'?'historical':legacy?'simulation-v2':'simulation-v3')).replace(/[^A-Za-z0-9_.-]/g,'').slice(0,100)||'dataset'
   };
+  if(!legacy)value.roundSeconds=challenge==='portfolio'?(PORTFOLIO_ROUND_OPTIONS.includes(input.roundSeconds)?input.roundSeconds:30):0;
+  return value;
 }
-export const boardKey = input => {const d=boardDimensions(input);return [d.version,d.challenge,d.strategy,d.source,d.sessionDays,d.barMinutes,d.durationMinutes,d.playMode,d.roundDays,d.datasetId].join('|');};
+export const boardKey = input => {
+ const d=boardDimensions(input),parts=[d.version,d.challenge,d.strategy,d.source,d.sessionDays,d.barMinutes,d.durationMinutes,d.playMode,d.roundDays,d.datasetId];
+ if(d.version===3)parts.push(d.roundSeconds);return parts.join('|');
+};
 export const boardURL = dimensions => 'leaderboard.html?'+new URLSearchParams(boardDimensions(dimensions)).toString();
 
 export function recordDeviceResult(dimensions,result,storage=globalThis.localStorage) {

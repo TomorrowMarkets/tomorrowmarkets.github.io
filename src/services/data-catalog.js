@@ -1,4 +1,5 @@
 // Datasets stay in the repository; only the authority loads future prices.
+import { SESSION_DAY_OPTIONS, DURATION_OPTIONS, PORTFOLIO_ROUND_OPTIONS } from '../engine/session.js';
 export async function fetchJSON(url, { fetchImpl = globalThis.fetch, timeoutMs = 30000 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -40,15 +41,16 @@ export async function loadCatalog(manifestPath, baseURL = document.baseURI, opti
 // dataset, its future price rows, or the authority's pending allocation map.
 export function publicSettings(settings) {
   return {
-    version: 3,
-    sessionDays: settings.sessionDays === 1 ? 1 : 5,
+    version: 4,
+    sessionDays: SESSION_DAY_OPTIONS.includes(settings.sessionDays) ? settings.sessionDays : 5,
     barMinutes: [0.25,5,10,15].includes(settings.barMinutes) ? settings.barMinutes : 5,
     fastBacktest: settings.fastBacktest === true,
     arenaLearning: settings.arenaLearning === true,
     windowStart: String(settings.windowStart || '').slice(0,10),
     windowEnd: String(settings.windowEnd || '').slice(0,10),
     dataSource: settings.dataSource === 'historical' ? 'historical' : 'simulated',
-    durationMinutes: [10, 15, 20].includes(settings.durationMinutes) ? settings.durationMinutes : 10,
+    durationMinutes: DURATION_OPTIONS.includes(settings.durationMinutes) ? settings.durationMinutes : 20,
+    portfolioRoundSeconds: PORTFOLIO_ROUND_OPTIONS.includes(settings.portfolioRoundSeconds) ? settings.portfolioRoundSeconds : 30,
     portfolioStride: settings.portfolioStride === 1 ? 1 : 5,
     datasetId: String(settings.datasetId || '').slice(0, 100),
     datasetLabel: String(settings.datasetLabel || '').slice(0, 160),
