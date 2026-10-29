@@ -22,6 +22,7 @@ import { PortfolioChallenge } from './engine/PortfolioChallenge.js';
 import { publicSettings } from './services/data-catalog.js';
 import { sessionPlan } from './engine/session.js';
 import { ArenaUI } from './ui/ArenaUI.js';
+import { MarketActivityUI } from './ui/MarketActivityUI.js';
 
 // ===================================================================
 // 0. SESSION CONSTANTS & SHARED HELPERS
@@ -484,6 +485,10 @@ class BookUI {
     this.midDisplay = document.getElementById('mid-price-display');
     this.spreadDisplay = document.getElementById('spread-display');
     this.last = null;
+    for (const container of [this.asksContainer,this.bidsContainer]) container?.addEventListener('click',event=>{
+      const button=event.target.closest('[data-book-price]');
+      if(button)eventBus.emit('BOOK_PRICE_SELECTED',{price:Number(button.dataset.bookPrice)});
+    });
 
     eventBus.on('TICK', (data) => {
       this.last = data;
@@ -508,7 +513,7 @@ class BookUI {
       if (!lvl) return '<div class="lvl"></div>';
       const depth = ((lvl.qty / maxQty) * 100).toFixed(1);
       const total = Math.round(lvl.price * lvl.qty).toLocaleString('en-US');
-      return `<div class="lvl lvl-${side}" style="--d:${depth}%"><span>$${lvl.price.toFixed(2)}</span><span>${lvl.qty}</span><span>${total}</span></div>`;
+      return `<button type="button" class="lvl lvl-${side}" data-book-price="${lvl.price}" style="--d:${depth}%" title="Use $${lvl.price.toFixed(2)} as limit price"><span>$${lvl.price.toFixed(2)}</span><span>${lvl.qty.toLocaleString('en-US')}</span><span>${total}</span></button>`;
     };
 
     if (this.asksContainer) {
@@ -603,6 +608,14 @@ class ControlsUI {
       list.addEventListener('keydown', (e) => this.onListKeydown(e));
     }
 
+    this.eventBus.on('BOOK_PRICE_SELECTED',({price})=>{
+      if(!Number.isFinite(price)||sessionManualTicketHidden())return;
+      this.setOrderType('LIMIT');this.priceInput.value=price.toFixed(2);
+    });
+    document.querySelectorAll('[data-ticket-qty]').forEach(button=>button.addEventListener('click',()=>{
+      this.qtyInput.value=button.dataset.ticketQty;
+    }));
+    function sessionManualTicketHidden(){return document.getElementById('trading-screen')?.classList.contains('is-algorithmic');}
     this.eventBus.on('ACCOUNT_UPDATE', (acc) => this.renderAccount(acc));
     this.eventBus.on('MARKET_STATE', ({ open }) => this.setMarketOpen(open));
     this.eventBus.on('TICK', (data) => {
@@ -1392,6 +1405,7 @@ function initApp() {
   });
 
   new BookUI(eventBus);
+  new MarketActivityUI(eventBus);
   new PriceChart(eventBus, getCurrentUserId, {
     originSecs: SESSION_OPEN_SECS,
     secsPerTick: SIM_SECS_PER_TICK,
@@ -1520,8 +1534,8 @@ function initApp() {
       challenge: sessionMode === 'portfolio' ? 'portfolio' : sessionMode === 'arena' ? 'arena' : sessionSettings.fastBacktest ? 'backtest' : 'trading',
       strategy: sessionMode === 'portfolio' ? 'discretionary' : sessionMode === 'arena' ? 'rl' : sessionMode === 'algorithmic' ? algoRunner?.language === 'simple' ? 'simple' : 'algorithmic' : 'discretionary',
       source: sessionSettings.dataSource,sessionDays:sessionSettings.sessionDays,barMinutes:sessionSettings.barMinutes,
-      durationMinutes:sessionSettings.durationMinutes,playMode,roundDays:sessionSettings.portfolioStride,
-      datasetId:sessionSettings.datasetId || 'simulation-v2'
+      durationMinutes:sessionSettings.durationMinutes,playMode,roundDays:sessionSettings.portfolioStride,roundSeconds:sessionSettings.portfolioRoundSeconds,
+      datasetId:sessionSettings.datasetId || 'simulation-v3'
     };
   }
   function startRunTracking(mode) { runTracker = sessionMode === 'arena' ? null : createBoardRun(scoreDimensions(mode === 'multi' ? 'multi' : 'single')); }
@@ -1554,7 +1568,7 @@ function initApp() {
   // flow; it runs once a mode (and for Algorithmic, a tested strategy) is set.
 
   const modeLabel = (m) => m === 'arena' ? 'RL arena' : m === 'portfolio' ? 'Portfolio management' : m === 'algorithmic' ? 'Algorithmic' : 'Discretionary';
-  const sessionLabel = () => `${modeLabel(sessionMode)} · ${sessionSettings.dataSource === 'historical' ? 'Historical' : 'Simulated'}${sessionSettings.demo ? ' · Demo' : ''} · ${sessionSettings.fastBacktest ? 'Fast backtest' : sessionSettings.durationMinutes+' min'}${sessionMode==='portfolio'?'':` · ${sessionSettings.sessionDays} day${sessionSettings.sessionDays>1?'s':''}`}`;
+  const sessionLabel = () => `${modeLabel(sessionMode)} · ${sessionSettings.dataSource === 'historical' ? 'Historical' : 'Simulated'}${sessionSettings.demo ? ' · Demo' : ''} · ${sessionMode==='portfolio'?sessionSettings.portfolioRoundSeconds+'s per round':sessionSettings.fastBacktest ? 'Fast backtest' : sessionSettings.durationMinutes+' min'}${sessionMode==='portfolio'?'':` · ${sessionSettings.sessionDays} day${sessionSettings.sessionDays>1?'s':''}`}`;
 
   function showModeSelect(kind, run) {
     pendingLaunch = { kind, run };
@@ -1637,6 +1651,7 @@ function initApp() {
     const isArena = sessionMode === 'arena';
     const isAlgo = sessionMode === 'algorithmic' || isArena;
     tradingScreen?.classList.toggle('is-algorithmic', isAlgo);
+    tradingScreen?.classList.toggle('is-discretionary', !isAlgo);
     $('positions-panel')?.classList.toggle('hidden', isArena);
     if (isArena) arenaUI.show(sessionSettings.arenaLearning);
     $('backtest-controls').hidden = !sessionSettings.fastBacktest;
@@ -1784,6 +1799,7 @@ function initApp() {
       dataSource: sessionSettings.dataSource,
       symbol: sessionData?.symbol || 'Spot / USD',
       progress: gameLoop.progress(),
+      activity: gameLoop.marketActivity(),
       points,
       bids: orderBook.levels('BUY', BOOK_LEVELS),
       asks: orderBook.levels('SELL', BOOK_LEVELS),
@@ -1988,7 +2004,7 @@ function initApp() {
 
   function beginPortfolioChallenge() {
     portfolioChallenge = new PortfolioChallenge(sessionData, {
-      durationMinutes: sessionSettings.durationMinutes, stride: sessionSettings.portfolioStride
+      roundSeconds: sessionSettings.portfolioRoundSeconds, stride: sessionSettings.portfolioStride
     });
     const players = role === 'solo' ? [currentUserId] : connectedPlayers.map((player) => player.id);
     for (const id of players) portfolioChallenge.register(id);
@@ -2027,7 +2043,7 @@ function initApp() {
   function finishPortfolioScore(snapshot = portfolioChallenge?.snapshot(currentUserId)) {
     const tracker=runTracker;runTracker=null;if(!tracker || !snapshot)return;
     tracker.finish({handle:currentUserId,pnl:snapshot.account.capital-STARTING_CASH,returnPct:(snapshot.account.capital/STARTING_CASH-1)*100,
-      maxDrawdown:snapshot.account.maxDrawdown,metadata:{windowStart:snapshot.startDate,windowEnd:snapshot.endDate,benchmark:snapshot.benchmark,demo:sessionSettings.demo}});
+      maxDrawdown:snapshot.account.maxDrawdown,metadata:{windowStart:snapshot.startDate,windowEnd:snapshot.endDate,benchmark:snapshot.benchmark,demo:sessionSettings.demo,totalRounds:snapshot.totalRounds,roundSeconds:snapshot.roundMs/1000}});
   }
   function arenaAgents() {
     return ['A','B'].map(letter=>({id:`bot:arena:${letter}`,agent:aiAgent?BranchingDQN.fromJSON(aiAgent.toJSON(),AI_LIVE_SETTINGS):createAgent(AI_LIVE_SETTINGS),learning:sessionSettings.arenaLearning}));
@@ -2227,7 +2243,9 @@ function initApp() {
         if (data.settings) sessionSettings = publicSettings(data.settings);
         if (['discretionary', 'algorithmic', 'portfolio', 'arena'].includes(data.mode)) sessionMode = data.mode;
         if (roomModeChip) roomModeChip.textContent = sessionLabel();
-        if (waitingHint && publicSlot == null) waitingHint.textContent = sessionSettings.datasetLabel
+        if (waitingHint && publicSlot == null) waitingHint.textContent = sessionMode === 'portfolio'
+          ? `${sessionSettings.datasetLabel} · ${sessionSettings.portfolioRoundSeconds} seconds per allocation round. The host chooses the year.`
+          : sessionSettings.datasetLabel
           ? `${sessionSettings.datasetLabel} · ${sessionSettings.durationMinutes} minute session. The host chooses the data.`
           : `Simulated order book · ${sessionSettings.durationMinutes} minute session.`;
         accountManager.setPlayerId(currentUserId);
