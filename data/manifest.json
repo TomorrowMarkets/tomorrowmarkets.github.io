@@ -3,21 +3,27 @@
   "orderbooks": [
     {
       "id": "demo-orderbook",
-      "label": "Five-session replay \u00b7 15-second synthetic quotes + trades",
+      "label": "Five-session replay · 15-second synthetic quotes + trades",
       "path": "orderbooks/demo-book.json",
       "demo": true
     },
     {
       "id": "demo-orderbook-20",
-      "label": "20-session replay \u00b7 1-minute synthetic quotes + trades",
+      "label": "20-session replay · 1-minute synthetic quotes + trades",
       "path": "orderbooks/demo-book-20.json",
       "demo": true
     }
   ],
   "portfolios": [
     {
+      "id": "yahoo-30",
+      "label": "Yahoo Finance · 30 assets · adjusted daily prices",
+      "path": "https://jpsdqawilipmsineoufz.supabase.co/storage/v1/object/public/tm-market-data/portfolio/yahoo-30.json",
+      "demo": false
+    },
+    {
       "id": "demo-portfolio",
-      "label": "Example portfolio challenge \u00b7 synthetic",
+      "label": "Example portfolio challenge · synthetic",
       "path": "portfolio/demo-30.json",
       "demo": true
     }
